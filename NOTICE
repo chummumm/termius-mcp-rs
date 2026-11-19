@@ -1,0 +1,13 @@
+Termius MCP Rust
+
+This project is an independent Rust port of the supplied Termius MCP 3.2.0
+source snapshot (MiaM1ku/termius-mcp), which derives from the Termius CLI.
+Original software: Copyright (c) 2020, Termius Corporation.
+Rust port: Copyright (c) 2026, termius-mcp-rs contributors.
+Distributed under the BSD 3-Clause license in LICENSE.
+
+Not affiliated with or endorsed by Termius Corporation. Termius is a
+trademark of its respective owner.
+
+The MCP tool descriptions and behavior are adapted from the source snapshot.
+No user application state, login tokens, vaults or SSH credentials are included.

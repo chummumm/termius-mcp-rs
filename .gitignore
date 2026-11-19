@@ -1,0 +1,12 @@
+/target/
+*.log
+.env
+.env.*
+!.env.example
+/.termius*/
+/state
+/state.lock
+/master.key
+/review-work/
+*.pem
+*.key
