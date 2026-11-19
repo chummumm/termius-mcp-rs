@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -15,10 +16,23 @@ from collect_licenses import override_texts, packaged_texts, validate_license_de
 from package_release import create_archive
 from prepare_release import prepare
 import publish_release
-from release_common import BINARIES, archive_name, sha256, validate_version
+from release_common import AUTOMATION_ROOT, BINARIES, TARGETS, archive_name, sha256, validate_version
 
 
 class ReleaseInputs(unittest.TestCase):
+    def test_workflow_runner_labels_match_packaging_metadata(self):
+        workflow = (AUTOMATION_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        entries = re.findall(
+            r"^[ \t]*- runner: ([A-Za-z0-9_.-]+)\n[ \t]*target: ([A-Za-z0-9_.-]+)$",
+            workflow,
+            re.MULTILINE,
+        )
+        self.assertEqual(len(entries), len(TARGETS), "Every target must have one literal runner entry")
+        self.assertEqual(
+            {target: runner for runner, target in entries},
+            {target: settings["runner"] for target, settings in TARGETS.items()},
+        )
+
     def test_version_rejects_shell_and_path_injection(self):
         for version in ["0.1.1;echo injected", "0.1.1\nvalue=bad", "../0.1.1", "v0.1.1", "01.1.1", "0.1.1-beta"]:
             with self.subTest(version=version), self.assertRaises(ValueError):

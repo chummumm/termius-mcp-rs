@@ -20,7 +20,7 @@ BINARIES = ("termius", "termius-mcp")
 TARGETS = {
     "x86_64-unknown-linux-gnu": {"runner": "ubuntu-22.04", "extension": ".tar.gz", "suffix": ""},
     "x86_64-pc-windows-msvc": {"runner": "windows-2025", "extension": ".zip", "suffix": ".exe"},
-    "aarch64-apple-darwin": {"runner": "macos-15", "extension": ".tar.gz", "suffix": ""},
+    "aarch64-apple-darwin": {"runner": "macos-latest", "extension": ".tar.gz", "suffix": ""},
 }
 VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")

@@ -19,9 +19,17 @@ The version must be a stable `MAJOR.MINOR.PATCH` value exactly equal to `Cargo.t
 | --- | --- | --- | --- |
 | Linux x86_64 | `ubuntu-22.04` | `x86_64-unknown-linux-gnu` | `.tar.gz` |
 | Windows x86_64 | `windows-2025` | `x86_64-pc-windows-msvc` | `.zip` |
-| macOS Apple Silicon | `macos-15` | `aarch64-apple-darwin` | `.tar.gz` |
+| macOS Apple Silicon | `macos-latest` | `aarch64-apple-darwin` | `.tar.gz` |
 
 These runner labels and architectures were checked against [GitHub's official hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) on 2026-11-19. Linux uses the older supported Ubuntu 22.04 image to avoid raising the GNU libc baseline unnecessarily. The packages are built and smoke-tested on the listed environments; other Linux distributions and OS versions are not claimed as validated. Windows uses the MSVC toolchain and may require the Microsoft Visual C++ runtime. macOS packages are not Developer ID signed or notarized, and Windows packages are not Authenticode signed.
+
+The macOS release job now follows the same `macos-latest` alias as CI. This alias
+tracks GitHub image updates; [the successful 2026-11-19 CI run](https://github.com/chummumm/termius-mcp-rs/actions/runs/44532924337)
+used `macos-26-arm64`. The native-host check below still rejects an unexpected
+architecture rather than packaging it as Apple Silicon. A runner-label change
+does not alter an already started workflow: that run retains its original source
+commit, runner selection and build metadata; subsequent release requests use the
+updated configuration.
 
 The workflow pins Rust `1.100.0`, uses `Cargo.lock` with `--locked`, and checks that the actual `rustc -vV` host equals the matrix target before packaging. Builds are native, not cross compiled. Python 3.13 is used only for CI/release maintenance scripts; end users need no Python installation.
 
