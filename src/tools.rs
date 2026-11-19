@@ -122,8 +122,11 @@ impl Runtime {
             };
             if name == "exec" {
                 out["ok"] = json!(out["timed_out"] != true && out["exit_code"] == 0);
+            } else if args["action"] == "list"
+                && let Some(page) = Pagination::from_args(&args)?
+            {
+                page.apply(&mut out, "entries")?;
             }
-            append_sync_metadata(&mut out, &snapshot.0.inventory);
             return Ok(out);
         }
         tokio::select! {
@@ -155,7 +158,13 @@ impl Runtime {
                 out["stale"] = json!(is_stale(state.last_synced.as_deref(), sync_ttl()));
                 out["vault_remembered"] = json!(vault_password(&state).is_some());
                 out["sync_ttl"] = json!(sync_ttl());
-                append_sync_metadata(&mut out, &state.inventory);
+                append_unreadable_count(&mut out, &state.inventory);
+                if args["diagnostics"] == true
+                    && let Some(warnings) = state.inventory["sync_warnings"].as_array()
+                    && !warnings.is_empty()
+                {
+                    out["sync_warnings"] = json!(warnings);
+                }
                 Ok(out)
             }
             "login" => {
@@ -237,7 +246,7 @@ impl Runtime {
                 }
                 let counts = inventory::counts(&next.inventory);
                 let mut out = json!({"ok":true,"last_synced":next.last_synced,"hosts":counts["hosts"],"counts":counts,"vault_remembered":vault_password(&next).is_some()});
-                append_sync_metadata(&mut out, &next.inventory);
+                append_unreadable_count(&mut out, &next.inventory);
                 self.commit(&previous, next).await?;
                 Ok(out)
             }
@@ -251,7 +260,12 @@ impl Runtime {
                     inventory::host_details(&state.inventory, required_string(args, "name")?)
                         .map_err(|e| error("host_not_found", e))?
                 };
-                append_sync_metadata(&mut out, &state.inventory);
+                if name == "hosts" {
+                    append_unreadable_count(&mut out, &state.inventory);
+                    if let Some(page) = Pagination::from_args(args)? {
+                        page.apply(&mut out, "hosts")?;
+                    }
+                }
                 if let Some(message) = warning {
                     out["stale"] = json!(true);
                     out["sync_error"] = json!(message);
@@ -265,9 +279,16 @@ impl Runtime {
             "inventory" => {
                 let (state, _) = self.ensure_fresh(sync_ttl(), false).await?;
                 let kind = required_string(args, "kind")?;
-                let mut out = inventory::list(&state.inventory, kind, true)
-                    .map_err(|e| error("inventory_failed", e))?;
-                append_sync_metadata(&mut out, &state.inventory);
+                let mut out = inventory::list(
+                    &state.inventory,
+                    kind,
+                    args["include_script"].as_bool().unwrap_or(true),
+                )
+                .map_err(|e| error("inventory_failed", e))?;
+                append_unreadable_count(&mut out, &state.inventory);
+                if let Some(page) = Pagination::from_args(args)? {
+                    page.apply(&mut out, "items")?;
+                }
                 Ok(out)
             }
             _ => Err(ToolError::new("unknown_tool", "Unknown tool")),
@@ -325,12 +346,69 @@ fn login_summary(session: &Value, remembered: bool) -> Value {
     json!({"ok":true,"username":session["username"],"encryption_schema":session["encryption_schema"],"vault_remembered":remembered})
 }
 
-fn append_sync_metadata(out: &mut Value, snapshot: &Value) {
-    out["unreadable_entities"] = json!(snapshot["unreadable_entities"].as_u64().unwrap_or(0));
-    if let Some(warnings) = snapshot["sync_warnings"].as_array()
-        && !warnings.is_empty()
+// Lists must still disclose an incomplete vault. Cached transport diagnostics
+// belong to an explicit status request, not every unrelated successful action.
+fn append_unreadable_count(out: &mut Value, snapshot: &Value) {
+    if let Some(count) = snapshot["unreadable_entities"].as_u64()
+        && count > 0
     {
-        out["sync_warnings"] = json!(warnings);
+        out["unreadable_entities"] = json!(count);
+    }
+}
+
+struct Pagination {
+    offset: usize,
+    limit: Option<usize>,
+}
+
+impl Pagination {
+    fn from_args(args: &Value) -> Result<Option<Self>, ToolError> {
+        if args.get("offset").is_none() && args.get("limit").is_none() {
+            return Ok(None);
+        }
+        let offset = match args.get("offset") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| {
+                    ToolError::new("invalid_argument", "offset must be a nonnegative integer")
+                })?,
+        };
+        let limit = args
+            .get("limit")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|n| (1..=10_000).contains(n))
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| {
+                        ToolError::new(
+                            "invalid_argument",
+                            "limit must be an integer from 1 to 10000",
+                        )
+                    })
+            })
+            .transpose()?;
+        Ok(Some(Self { offset, limit }))
+    }
+
+    fn apply(&self, out: &mut Value, field: &str) -> Result<(), ToolError> {
+        let items = out
+            .get_mut(field)
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| ToolError::new("internal_error", "Invalid list result"))?;
+        let total = items.len();
+        let start = self.offset.min(total);
+        let count = self.limit.unwrap_or(total).min(total - start);
+        let end = start + count;
+        items.truncate(end);
+        items.drain(..start);
+        out["count"] = json!(count);
+        out["total"] = json!(total);
+        out["offset"] = json!(self.offset);
+        out["next_offset"] = json!((end < total).then_some(end));
+        Ok(())
     }
 }
 
@@ -468,11 +546,28 @@ pub fn validate(name: &str, args: &Value) -> Result<(), ToolError> {
     }
     if name == "exec" {
         required_string(args, "command")?;
+        if let Some(value) = object.get("max_output_chars")
+            && !value.as_u64().is_some_and(|n| n <= 200_000)
+        {
+            return Err(ToolError::new(
+                "invalid_argument",
+                "max_output_chars must be an integer from 0 to 200000",
+            ));
+        }
+    }
+    if matches!(name, "hosts" | "inventory") || (name == "files" && args["action"] == "list") {
+        Pagination::from_args(args)?;
     }
     if name == "files" {
         let action = required_string(args, "action")?;
         if action != "list" {
             required_string(args, "path")?;
+            if args.get("offset").is_some() || args.get("limit").is_some() {
+                return Err(ToolError::new(
+                    "invalid_argument",
+                    "limit and offset are only supported by files action=list",
+                ));
+            }
         }
         if matches!(action, "get" | "put") {
             required_string(args, "local_path")?;
@@ -518,6 +613,64 @@ mod tests {
             .is_ok()
         );
         assert!(validate("files", &json!({"name":"x","action":"get","path":"/x"})).is_err());
+    }
+    #[test]
+    fn invalid_output_controls_are_rejected_before_cloud_or_ssh_work() {
+        for value in [
+            json!(-1),
+            json!(0),
+            json!(10_001),
+            json!(u64::MAX),
+            json!(null),
+            json!(1.5),
+            json!("1"),
+            json!(true),
+        ] {
+            assert!(validate("hosts", &json!({"limit":value})).is_err());
+            assert!(validate("inventory", &json!({"kind":"groups","limit":value})).is_err());
+            assert!(validate("files", &json!({"name":"x","action":"list","limit":value})).is_err());
+        }
+        for value in [json!(-1), json!(null), json!(1.5), json!("1"), json!(true)] {
+            assert!(validate("hosts", &json!({"offset":value})).is_err());
+        }
+        for value in [
+            json!(-1),
+            json!(200_001),
+            json!(null),
+            json!("16"),
+            json!(1.5),
+        ] {
+            assert!(
+                validate(
+                    "exec",
+                    &json!({"name":"x","command":"true","max_output_chars":value})
+                )
+                .is_err()
+            );
+        }
+        assert!(validate("status", &json!({"diagnostics":"false"})).is_err());
+        assert!(
+            validate(
+                "inventory",
+                &json!({"kind":"snippets","include_script":"false"})
+            )
+            .is_err()
+        );
+        assert!(
+            validate(
+                "files",
+                &json!({"name":"x","action":"rm","path":"/x","limit":1})
+            )
+            .is_err()
+        );
+        assert!(
+            validate(
+                "exec",
+                &json!({"name":"x","command":"true","max_output_chars":0})
+            )
+            .is_ok()
+        );
+        assert!(validate("hosts", &json!({"limit":1,"offset":0})).is_ok());
     }
     #[test]
     fn stale_dates_are_conservative() {

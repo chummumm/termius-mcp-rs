@@ -2,10 +2,15 @@
   {
     "name": "status",
     "title": "Termius Status",
-    "description": "Show Termius login state, last cloud sync time, whether the local vault cache is stale, whether the vault password is remembered, and inventory counts. Does not sync. Call this first when you do not know if the user is signed in.",
+    "description": "Show login state, last sync time, cache freshness, remembered-password status and inventory counts. Does not sync. Use diagnostics=true only to troubleshoot cached cloud warnings.",
     "inputSchema": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "diagnostics": {
+          "type": "boolean",
+          "description": "Include detailed warnings from the last cloud sync. Default false."
+        }
+      }
     },
     "outputSchema": {
       "type": "object"
@@ -122,7 +127,7 @@
   {
     "name": "sync",
     "title": "Sync Termius Vault",
-    "description": "Force a pull from Termius Cloud now. hosts and host pull when their cache is older than 600 seconds. Use sync for exec, files, and inventory, or to pass and remember the vault password. Password comes from the password argument, TERMIUS_VAULT_PASSWORD, or the secret store. Returns the new last_synced and the counts.",
+    "description": "Force a cloud refresh now, or supply and remember a vault password. Other inventory and SSH tools already auto-sync; calling sync before each operation is unnecessary. Password comes from the argument, TERMIUS_VAULT_PASSWORD, or the secret store. Returns last_synced and counts.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -150,13 +155,24 @@
   {
     "name": "hosts",
     "title": "List Hosts",
-    "description": "List Termius hosts (id, label, address, group, username). Pulls Termius Cloud when the local cache is older than 600 seconds. If that pull fails, returns the local cache and sets stale to true. Filter with query against label, address, group, or username. Use host for full SSH settings. Use exec to run a command. Use files for SFTP.",
+    "description": "List hosts. Filter with query; use limit/offset for large inventories. Without pagination, returns all matches. Refreshes after 600 seconds; a failed refresh returns cache with stale=true and sync_error. Use host for details, exec for SSH, files for SFTP.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
           "description": "Optional case-insensitive substring on label, address, group, or username"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Maximum matches to return. Omit for all. Pagination adds total, offset and next_offset (null at the end); count is this page's size."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip this many matches after filtering. Default 0."
         }
       }
     },
@@ -197,7 +213,7 @@
   {
     "name": "exec",
     "title": "Run SSH Command",
-    "description": "Run a shell command on a Termius host over SSH. Required: name (host numeric id or exact label from hosts) and command; optional timeout in seconds caps the SSH phase (connect plus run, default 60). Automatic cloud sync precedes this phase and has a separate 120-second limit. On timeout the connection is closed and the result has timed_out true, exit_code null, and the output so far; the remote process may keep running. Uses the username, password, or key from the vault. Auto-pulls a stale vault first (TERMIUS_SYNC_TTL). Returns stdout, stderr, exit_code, and host_key_verification (configured per-endpoint modes, not proof of completed handshakes). Unspecified strict_host_key_check defaults false; explicit inherited true still verifies server keys. Never echo secrets from the output unless the user asked for that command.",
+    "description": "Execute a remote command over SSH using saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). Use max_output_chars for verbose commands. timeout closes the route and returns timed_out=true, exit_code=null and captured output; the remote process may continue. Returns stdout, stderr, exit_code, truncated and configured host_key_verification modes. Unspecified key checking is disabled; inherited true still verifies. Never echo unrequested secrets.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -208,6 +224,12 @@
         "command": {
           "type": "string",
           "description": "Remote shell command"
+        },
+        "max_output_chars": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200000,
+          "description": "Characters to retain per stdout/stderr stream, default 200000. Use e.g. 16000 for logs or 0 for exit status only. A short marker indicates discarded output; execution still completes."
         },
         "timeout": {
           "type": "integer",
@@ -236,7 +258,7 @@
   {
     "name": "files",
     "title": "SFTP Files",
-    "description": "Manage files on a Termius host over SFTP. Required: name (host numeric id or exact label from hosts) and action; path is required for every action except list (defaults to .). Uses the username, password, or key from the vault. Auto-pulls a stale vault first (TERMIUS_SYNC_TTL). action=list lists a directory; stat shows one path; read returns file content (utf-8 or base64, max 200000 bytes); write uploads inline content (max 200000 bytes); get copies remote -> local_path on this machine; put copies local_path -> remote; get/put stream without a total-file-size cap; mkdir creates a directory (recursive=true creates parents); rm deletes a file or empty dir (recursive=true deletes a tree); rename moves a remote path (needs dest). timeout caps the SSH phase (connect plus transfer, default 60); automatic cloud sync precedes it with a separate 120-second limit; raise it for big get or put. Prefer this over exec for copy and edit. Never echo secrets from file content unless the user asked. host_key_verification reports configured target/jump modes, not completed handshakes. Unspecified strict_host_key_check defaults false; explicit inherited true still verifies server keys.",
+    "description": "SFTP via saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). list supports limit/offset; stat returns metadata; read/write use inline text or base64 (max 200000 decoded bytes). get copies remote to local_path; put copies local_path to remote, streaming without a total-size cap or returning file content. mkdir/rm support recursive; rename needs dest. timeout covers SSH connection and transfer; raise it for large files. host_key_verification reports configured modes, not completed handshakes. Unspecified key checking is disabled; inherited true verifies. Never echo unrequested secrets.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -262,6 +284,17 @@
         "path": {
           "type": "string",
           "description": "Remote path. Default . (login directory) for list"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "list only: maximum entries to return. Omit for all. Adds total, offset and next_offset (null at the end); count is this page's size."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "list only: skip this many entries in the sorted listing. Default 0."
         },
         "local_path": {
           "type": "string",
@@ -314,7 +347,7 @@
   {
     "name": "inventory",
     "title": "List Inventory",
-    "description": "List groups, identities, SSH keys, or snippets. Auto-pulls a stale vault first (TERMIUS_SYNC_TTL). Identities and keys omit secret material. Snippets include the script text.",
+    "description": "List groups, identities, keys or snippets; auto-syncs stale inventory (TERMIUS_SYNC_TTL). Identities and keys omit secrets. Use limit/offset for large lists and include_script=false to list snippets without their bodies. Defaults preserve full results.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -327,6 +360,21 @@
             "snippets"
           ],
           "description": "Which inventory set to list"
+        },
+        "include_script": {
+          "type": "boolean",
+          "description": "Include snippet bodies. Default true; false returns snippet id/label only."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Maximum items to return. Omit for all. Adds total, offset and next_offset (null at the end); count is this page's size."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip this many visible items. Default 0."
         }
       },
       "required": [

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.2
+
+### Changed
+
+- Stop repeating optional cloud/keyserver warning strings in ordinary tool results. `status(diagnostics=true)` exposes cached details when troubleshooting.
+- Omit zero `unreadable_entities` counts and unrelated global diagnostics from successful single-host operations. Positive counts remain on inventory/status/sync results, and real operation errors and stale-cache warnings remain visible.
+- Clarify that tools already auto-sync, avoiding redundant manual `sync` calls. Preserve the original terminal commands, SSH/SFTP behavior and compatible MCP text/structured result representations.
+
+### Added
+
+- Optional `limit`/`offset` pagination for `hosts`, `inventory` and SFTP `list`, with `total` and `next_offset`; default calls still return all results.
+- Optional `inventory(include_script=false)` to list snippets without their bodies; the default still includes scripts.
+- Optional `exec(max_output_chars=0..200000)` to bound each output stream and its capture buffer. The default remains 200000 characters; truncated output is still drained so execution and exit status are preserved.
+- Regression coverage for quiet diagnostics, incomplete inventories, pagination, protocol compatibility and real SSH output draining with small/zero capture budgets.
+
 ## 0.1.1
 
 ### Changed

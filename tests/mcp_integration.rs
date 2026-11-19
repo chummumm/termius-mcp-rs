@@ -9,6 +9,9 @@ use tokio::io::{
 };
 use tokio_util::sync::CancellationToken;
 
+const OPTIONAL_KEY_WARNING: &str =
+    "Team vault keys could not be loaded; entities requiring those keys remain unavailable";
+
 fn runtime(port: u16) -> Result<(tempfile::TempDir, Arc<Runtime>)> {
     let directory = tempfile::tempdir()?;
     let mut store = Store::open_with(
@@ -26,7 +29,9 @@ fn runtime(port: u16) -> Result<(tempfile::TempDir, Arc<Runtime>)> {
         "sshconfig_set":[{"id":10,"identity":100,"port":port}],
         "identity_set":[{"id":100,"username":"fixture","is_visible":true,"label":"fixture-identity","password":"fixture-ssh-password"}],
         "sshkeycrypt_set":[{"id":300,"label":"fixture-key","private_key":"fixture-private-material"}],
-        "snippet_set":[{"id":400,"label":"fixture-snippet","script":"echo fixture"}]
+        "snippet_set":[{"id":400,"label":"fixture-snippet","script":"echo fixture"}],
+        "unreadable_entities":0,
+        "sync_warnings":[OPTIONAL_KEY_WARNING]
     });
     store.save()?;
     Ok((directory, Runtime::new(store)))
@@ -88,6 +93,166 @@ async fn all_inventory_tools_have_flat_safe_envelopes() -> Result<()> {
         .await?;
     assert_eq!(data["count"], 1);
     assert!(data["hosts"].is_array());
+    Ok(())
+}
+
+#[tokio::test]
+async fn optional_key_diagnostics_are_explicit_and_legacy_text_matches_structured_data()
+-> Result<()> {
+    let (_dir, runtime) = runtime(22)?;
+    for (name, args) in [
+        ("status", json!({})),
+        ("hosts", json!({})),
+        ("host", json!({"name":"1"})),
+        ("inventory", json!({"kind":"snippets"})),
+    ] {
+        let data = runtime.call(name, args, CancellationToken::new()).await?;
+        assert!(data.get("sync_warnings").is_none(), "{name}");
+        assert!(data.get("unreadable_entities").is_none(), "{name}");
+        assert!(!data.to_string().contains(OPTIONAL_KEY_WARNING));
+    }
+
+    let (client, server) = tokio::io::duplex(65536);
+    let (server_read, server_write) = tokio::io::split(server);
+    let task = tokio::spawn(protocol::serve(
+        runtime,
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let (read, mut write) = tokio::io::split(client);
+    let mut read = BufReader::new(read);
+    initialize(&mut read, &mut write).await?;
+    for (id, diagnostics) in [(2, false), (3, true)] {
+        send(&mut write, json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"status","arguments":{"diagnostics":diagnostics}}})).await?;
+        let result = receive(&mut read).await?["result"].clone();
+        let text = result["content"][0]["text"]
+            .as_str()
+            .context("text result")?;
+        let decoded: Value = serde_json::from_str(text)?;
+        assert_eq!(decoded, result["structuredContent"]);
+        assert_eq!(result["content"].as_array().unwrap().len(), 1);
+        assert_eq!(text.contains(OPTIONAL_KEY_WARNING), diagnostics);
+        if diagnostics {
+            assert_eq!(decoded["sync_warnings"], json!([OPTIONAL_KEY_WARNING]));
+        }
+    }
+    write.shutdown().await?;
+    task.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn partial_inventory_is_disclosed_without_repeating_transport_warnings() -> Result<()> {
+    let (dir, runtime) = runtime(22)?;
+    let mut store = Store::open_with(
+        dir.path().join("data"),
+        Some("test-only-state-passphrase"),
+        Some("0"),
+    )?;
+    store.state.inventory["host_set"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":2,"_undecryptable":true}));
+    store.state.inventory["unreadable_entities"] = json!(1);
+    store.save()?;
+    for (name, args) in [
+        ("status", json!({})),
+        ("hosts", json!({})),
+        ("inventory", json!({"kind":"groups"})),
+    ] {
+        let data = runtime.call(name, args, CancellationToken::new()).await?;
+        assert_eq!(data["unreadable_entities"], 1, "{name}");
+        assert!(data.get("sync_warnings").is_none(), "{name}");
+        if name == "hosts" {
+            assert_eq!(data["count"], 1);
+        }
+    }
+    let readable = runtime
+        .call("host", json!({"name":"1"}), CancellationToken::new())
+        .await?;
+    assert!(readable.get("unreadable_entities").is_none());
+    let error = runtime
+        .call(
+            "exec",
+            json!({"name":"2","command":"true"}),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("an unavailable target must still fail before opening a socket");
+    assert_eq!(error.code, "ssh_failed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn optional_pagination_and_script_projection_preserve_default_results() -> Result<()> {
+    let (dir, runtime) = runtime(22)?;
+    let mut store = Store::open_with(
+        dir.path().join("data"),
+        Some("test-only-state-passphrase"),
+        Some("0"),
+    )?;
+    store.state.inventory["host_set"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            json!({"id":2,"label":"other","address":"127.0.0.2","ssh_config":10}),
+            json!({"id":3,"label":"match-a","address":"127.0.0.3","ssh_config":10}),
+            json!({"id":4,"label":"match-b","address":"127.0.0.4","ssh_config":10}),
+        ]);
+    store.save()?;
+    let all = runtime
+        .call("hosts", json!({}), CancellationToken::new())
+        .await?;
+    assert_eq!(all["count"], 4);
+    assert!(all.get("total").is_none());
+    for (offset, expected_id, next) in [(0, 3, Some(1)), (1, 4, None)] {
+        let page = runtime
+            .call(
+                "hosts",
+                json!({"query":"match", "limit":1, "offset":offset}),
+                CancellationToken::new(),
+            )
+            .await?;
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["count"], 1);
+        assert_eq!(page["offset"], offset);
+        assert_eq!(page["next_offset"], json!(next));
+        assert_eq!(page["hosts"][0]["id"], expected_id);
+    }
+    let empty = runtime
+        .call(
+            "hosts",
+            json!({"limit":1,"offset":usize::MAX}),
+            CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(empty["count"], 0);
+    assert_eq!(empty["total"], 4);
+    assert_eq!(empty["next_offset"], Value::Null);
+    assert_eq!(empty["hosts"], json!([]));
+    let full = runtime
+        .call(
+            "inventory",
+            json!({"kind":"snippets"}),
+            CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(full["items"][0]["script"], "echo fixture");
+    assert!(full.get("total").is_none());
+    let compact = runtime
+        .call(
+            "inventory",
+            json!({"kind":"snippets","include_script":false,"limit":1}),
+            CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(
+        compact["items"],
+        json!([{"id":400,"label":"fixture-snippet"}])
+    );
+    assert_eq!(compact["count"], 1);
+    assert_eq!(compact["total"], 1);
+    assert_eq!(compact["next_offset"], Value::Null);
     Ok(())
 }
 

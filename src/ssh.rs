@@ -50,24 +50,54 @@ fn timeout_seconds(args: &Value) -> Result<u64> {
     Ok(timeout)
 }
 
+fn output_char_limit(args: &Value) -> Result<usize> {
+    match args.get("max_output_chars") {
+        None => Ok(MAX_OUTPUT),
+        Some(value) => value
+            .as_u64()
+            .filter(|limit| *limit <= MAX_OUTPUT as u64)
+            .map(|limit| limit as usize)
+            .context("max_output_chars must be an integer from 0 to 200000"),
+    }
+}
+
 /// A small bounded capture continues draining after the output limit is hit.
-#[derive(Default)]
 struct Capture {
     bytes: Vec<u8>,
     dropped: bool,
+    max_output_chars: usize,
+}
+impl Default for Capture {
+    fn default() -> Self {
+        Self::new(MAX_OUTPUT)
+    }
 }
 impl Capture {
+    fn new(max_output_chars: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            dropped: false,
+            max_output_chars,
+        }
+    }
+
     fn add(&mut self, bytes: &[u8]) {
+        // Four UTF-8 bytes per character preserves the requested prefix even
+        // when SSH packets split a character. A zero budget still drains data.
+        let max_capture_bytes = self
+            .max_output_chars
+            .saturating_mul(4)
+            .min(MAX_CAPTURE_BYTES);
         let take = bytes
             .len()
-            .min(MAX_CAPTURE_BYTES.saturating_sub(self.bytes.len()));
+            .min(max_capture_bytes.saturating_sub(self.bytes.len()));
         self.bytes.extend_from_slice(&bytes[..take]);
         self.dropped |= take < bytes.len();
     }
     fn finish(self, label: &str) -> (String, bool) {
         let text = String::from_utf8_lossy(&self.bytes);
         let mut chars = text.chars();
-        let mut output: String = chars.by_ref().take(MAX_OUTPUT).collect();
+        let mut output: String = chars.by_ref().take(self.max_output_chars).collect();
         let truncated = self.dropped || chars.next().is_some();
         if truncated {
             output.push_str(&format!("\n...[{label} truncated]..."));
@@ -544,9 +574,10 @@ pub async fn run_exec(
     );
     ensure!(command.len() <= 1024 * 1024, "command exceeds 1 MiB");
     let timeout = timeout_seconds(args)?;
+    let max_output_chars = output_char_limit(args)?;
     let deadline = Instant::now() + Duration::from_secs(timeout);
-    let mut out = Capture::default();
-    let mut err = Capture::default();
+    let mut out = Capture::new(max_output_chars);
+    let mut err = Capture::new(max_output_chars);
     let mut exit_code = None;
     let mut timed_out = false;
     let completed = {
@@ -1385,6 +1416,92 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+    #[test]
+    fn optional_output_budget_keeps_the_original_default_and_rejects_invalid_values() {
+        assert_eq!(output_char_limit(&json!({})).unwrap(), MAX_OUTPUT);
+        for limit in [0, 1, 16_000, MAX_OUTPUT] {
+            assert_eq!(
+                output_char_limit(&json!({"max_output_chars":limit})).unwrap(),
+                limit
+            );
+        }
+        for value in [
+            json!(-1),
+            json!(MAX_OUTPUT + 1),
+            json!(u64::MAX),
+            json!(true),
+            json!(1.0),
+            json!("16"),
+            Value::Null,
+        ] {
+            assert!(output_char_limit(&json!({"max_output_chars":value})).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_exec_rejects_an_invalid_output_budget_before_connecting() {
+        let spec = ConnectionSpec {
+            host_id: json!(1),
+            label: "no connection expected".into(),
+            jumps: vec![],
+            target: Endpoint {
+                address: String::new(),
+                port: 0,
+                username: None,
+                password: None,
+                private_key: None,
+                passphrase: None,
+                strict_host_key_check: false,
+                known_host_keys: vec![],
+                connect_timeout: 1,
+                keep_alive: 0,
+            },
+        };
+        for value in [json!(-1), json!(u64::MAX), json!(false), Value::Null] {
+            let error = run_exec(
+                &spec,
+                &json!({"command":"true", "max_output_chars":value}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("max_output_chars"));
+        }
+    }
+
+    #[test]
+    fn small_output_budget_preserves_split_unicode_and_keeps_accepting_data() {
+        let mut out = Capture::new(3);
+        for chunk in "雪🌈éabc".as_bytes().chunks(2) {
+            out.add(chunk);
+        }
+        for _ in 0..1024 {
+            out.add(&[b'x'; 4096]);
+        }
+        assert_eq!(out.bytes.len(), 12);
+        assert_eq!(
+            out.finish("stdout"),
+            ("雪🌈é\n...[stdout truncated]...".into(), true)
+        );
+
+        let mut exact = Capture::new(3);
+        exact.add("雪🌈é".as_bytes());
+        assert_eq!(exact.finish("stderr"), ("雪🌈é".into(), false));
+    }
+
+    #[test]
+    fn zero_output_budget_distinguishes_no_output_from_discarded_output() {
+        assert_eq!(Capture::new(0).finish("stdout"), (String::new(), false));
+        let mut out = Capture::new(0);
+        out.add(b"first packet");
+        out.add(b"later packet");
+        assert!(out.bytes.is_empty());
+        assert_eq!(
+            out.finish("stderr"),
+            ("\n...[stderr truncated]...".into(), true)
+        );
+    }
+
     #[test]
     fn output_is_bounded_and_utf8_safe() {
         let mut out = Capture::default();

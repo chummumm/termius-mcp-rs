@@ -14,7 +14,10 @@ use std::{
 use termius_mcp::{
     ConnectionSpec, Endpoint,
     ssh::{run_exec, run_files},
+    storage::Store,
+    tools::Runtime,
 };
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio_util::sync::CancellationToken;
 
 struct Fixture {
@@ -267,6 +270,92 @@ async fn openssh_exec_and_all_sftp_actions() -> Result<()> {
     )
     .await?;
     assert!(!std::path::Path::new(&base).exists());
+
+    // Exercise tool dispatch as well as the SFTP transport against this server.
+    // The state deliberately contains diagnostics for unrelated unreadable hosts.
+    let paged = fixture.remote("paged");
+    std::fs::create_dir(&paged)?;
+    std::fs::write(format!("{paged}/B.txt"), "second file")?;
+    std::fs::write(format!("{paged}/a.txt"), "first file")?;
+    std::fs::create_dir(format!("{paged}/z-dir"))?;
+    let mut store = Store::open_with(
+        fixture.directory.path().join("runtime-state"),
+        Some("test-only-state-passphrase"),
+        Some("0"),
+    )?;
+    store.state.session =
+        Some(json!({"username":"fixture@example.invalid","apikey":"fixture-device-token"}));
+    store.state.vault_password = Some("fixture-vault-password".into());
+    store.state.last_synced = Some(OffsetDateTime::now_utc().format(&Rfc3339)?);
+    store.state.inventory = json!({
+        "host_set":[
+            {"id":1,"label":"fixture","address":spec.target.address,"ssh_config":10},
+            {"id":2,"_undecryptable":true},
+            {"id":3,"_undecryptable":true}
+        ],
+        "sshconfig_set":[{"id":10,"identity":100,"port":spec.target.port,"strict_host_key_check":true}],
+        "identity_set":[{"id":100,"username":spec.target.username,"ssh_key":300}],
+        "sshkeycrypt_set":[{"id":300,"label":"fixture-key","private_key":spec.target.private_key}],
+        "knownhost_set":[{"id":400,"hostnames":format!("[{}]:{}",spec.target.address,spec.target.port),"key":spec.target.known_host_keys[0]}],
+        "unreadable_entities":2,
+        "sync_warnings":["Team vault keys could not be loaded; entities requiring those keys remain unavailable"]
+    });
+    store.save()?;
+    let runtime = Runtime::new(store);
+    let full = runtime
+        .call(
+            "files",
+            json!({"name":"1","action":"list","path":paged}),
+            token(),
+        )
+        .await?;
+    assert_eq!(full["count"], 3);
+    assert_eq!(full["entries"][0]["name"], "z-dir");
+    assert_eq!(full["entries"][1]["name"], "a.txt");
+    assert_eq!(full["entries"][2]["name"], "B.txt");
+    for field in ["total", "offset", "next_offset"] {
+        assert!(full.get(field).is_none());
+    }
+    let first_page = runtime
+        .call(
+            "files",
+            json!({"name":"1","action":"list","path":paged,"limit":2,"offset":0}),
+            token(),
+        )
+        .await?;
+    assert_eq!(first_page["count"], 2);
+    assert_eq!(first_page["total"], 3);
+    assert_eq!(first_page["offset"], 0);
+    assert_eq!(first_page["next_offset"], 2);
+    assert_eq!(first_page["entries"][0], full["entries"][0]);
+    assert_eq!(first_page["entries"][1], full["entries"][1]);
+    let last_page = runtime
+        .call(
+            "files",
+            json!({"name":"1","action":"list","path":paged,"limit":2,"offset":2}),
+            token(),
+        )
+        .await?;
+    assert_eq!(last_page["count"], 1);
+    assert_eq!(last_page["total"], 3);
+    assert_eq!(last_page["offset"], 2);
+    assert_eq!(last_page["next_offset"], json!(null));
+    assert_eq!(last_page["entries"][0], full["entries"][2]);
+    let executed = runtime
+        .call(
+            "exec",
+            json!({"name":"1","command":"printf runtime-ok","max_output_chars":16}),
+            token(),
+        )
+        .await?;
+    assert_eq!(executed["stdout"], "runtime-ok");
+    assert_eq!(executed["exit_code"], 0);
+    for result in [&full, &first_page, &last_page, &executed] {
+        assert_eq!(result["ok"], true);
+        assert!(result.get("sync_warnings").is_none());
+        assert!(result.get("unreadable_entities").is_none());
+    }
+
     // The SSH subsystem follows a real direct-tcpip jump into another SSH session.
     let mut jumped = fixture.spec();
     jumped.jumps.push(fixture.endpoint.clone());
@@ -381,6 +470,34 @@ async fn openssh_limits_timeout_cancellation_and_symlinks() -> Result<()> {
     assert_eq!(result["truncated"], true);
     assert!(result["stdout"].as_str().unwrap().len() < 201000);
     assert!(result["stderr"].as_str().unwrap().len() < 201000);
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(result["timed_out"], false);
+    // Each stream exceeds the SSH receive window. Stopping reads at the
+    // output budget would block the remote writer before it can exit 23.
+    for max_output_chars in [16, 0] {
+        let result = run_exec(
+            &spec,
+            &json!({
+                "command":"head -c 8388608 /dev/zero; head -c 8388608 /dev/zero >&2; exit 23",
+                "timeout":15,
+                "max_output_chars":max_output_chars
+            }),
+            token(),
+        )
+        .await?;
+        assert_eq!(result["exit_code"], 23);
+        assert_eq!(result["timed_out"], false);
+        assert_eq!(result["truncated"], true);
+        for stream in ["stdout", "stderr"] {
+            assert_eq!(
+                result[stream],
+                format!(
+                    "{}\n...[{stream} truncated]...",
+                    "\0".repeat(max_output_chars)
+                )
+            );
+        }
+    }
     let mut wrong = fixture.spec();
     wrong.target.known_host_keys = vec![std::fs::read_to_string(
         fixture.directory.path().join("client_key.pub"),

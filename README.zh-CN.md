@@ -119,12 +119,42 @@ Google 流程会给出网页登录地址。完成登录后，不打开 Termius �
 
 Rust 版使用稳定的 **云端 ID**，可能与 Python 版的本地 ID 不同；请重新查询
 `hosts`，不要沿用旧编号。同名主机存在歧义时会报错。`snippets` 会按原版行为
-返回脚本正文。
+默认返回脚本正文。
 
 `hosts`/`host` 的自动同步间隔为 600 秒；同步失败可以返回旧缓存，并标记
 `stale: true` 与 `sync_error`。未登录或缺少密码仍会报错。
 `exec`/`files`/`inventory` 默认 60 秒刷新，可由 `TERMIUS_SYNC_TTL` 调整；
 同步失败时不会继续执行。缺失、损坏或已撤销的身份/密钥/跳板关系会阻止连接。
+
+### 减少上下文占用
+
+普通返回不再附带可选云端/密钥接口的技术性警告。排障时可调用 MCP 的
+`status`，传入 `{"diagnostics":true}` 查看上次同步保存的详细提示。
+如果确实存在无法解密的资源，`status`、`sync`、`hosts`、`inventory` 仍返回
+大于 0 的 `unreadable_entities` 数量；数量为 0 时省略。已经成功的单主机
+SSH/SFTP 操作不再重复全局诊断。实际操作错误和旧缓存提示仍会返回。
+
+以下都是 **MCP 工具的可选参数**，保留终端命令、原版业务字段及默认结果范围：
+
+| 工具 | 参数 | 用途 |
+| --- | --- | --- |
+| `hosts` | `query`、`limit`、`offset` | 先过滤，再分批返回主机 |
+| `inventory` | `limit`、`offset`、`include_script` | 分批返回可见资源；`include_script:false` 省略脚本正文 |
+| `files` 的 `action:list` | `limit`、`offset` | 分批返回排序后的目录列表 |
+| `exec` | `max_output_chars` | 分别限制 stdout/stderr 保留的字符数；`0` 不保留正文 |
+
+不传分页参数仍返回完整列表。`limit` 范围为 1–10000，`offset` 默认 0，
+作用于当前结果集。分页结果增加 `total`、`offset`、`next_offset`，最后一页
+的 `next_offset` 为 `null`；`count` 仍表示本次实际返回的条数，不会删除数据。
+每页基于当前缓存或目录列表；两次调用之间的云端刷新、目录变更可能改变页内成员。
+SFTP 仍保留原来的单目录 10000 项上限。
+`include_script` 默认 `true`。`max_output_chars` 范围为 0–200000，默认
+200000；有输出被丢弃时返回 `truncated:true` 及简短截断标记，但仍继续读取
+SSH 通道直到获得退出状态。大文件 `get`/`put` 只返回元数据，不返回文件正文。
+
+为兼容 MCP 客户端，协议仍同时提供文本 JSON 和 `structuredContent`，符合
+[MCP 的兼容建议](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#structured-content)。
+客户端是否把两份数据都放进模型上下文，由客户端决定；上述参数能同时缩小两份结果。
 
 ### SSH 安全和限制
 
@@ -146,7 +176,8 @@ Rust 版使用稳定的 **云端 ID**，可能与 Python 版的本地 ID 不同�
   可能排队。客户端工具超时应留出这些时间。
 - 执行超时关闭连接，返回 `timed_out: true`、`exit_code: null` 及已捕获输出。
   不能保证远端进程已经停止。MCP 取消会关闭连接链，不再返回该请求结果。
-- stdout/stderr 分别最多保留 200000 个解码后字符，底层缓存也有字节上限。
+- stdout/stderr 默认分别最多保留 200000 个解码后字符，可通过
+  `max_output_chars` 缩小；底层字节缓存也随预算缩小，截断后仍继续读取通道。
 - SFTP 内联 read/write 仍限制 200000 字节，因为内容会进入 MCP 消息。
   文件 get/put **不再设置应用层文件总大小上限**，按 32 KiB 分块传输。
   磁盘空间、文件系统和操作超时仍会影响传输；大文件应同时调大 `files.timeout`
@@ -161,7 +192,7 @@ Rust 版使用稳定的 **云端 ID**，可能与 Python 版的本地 ID 不同�
 | --- | --- |
 | `TERMIUS_DATA_DIR` | 覆盖默认的 `~/.termius-rs` 数据目录 |
 | `TERMIUS_VAULT_PASSWORD` | 保险库密码，优先于记住的密码 |
-| `TERMIUS_SYNC_TTL` | 自动同步间隔，秒；0 表示每次刷新 |
+| `TERMIUS_SYNC_TTL` | `exec`/`files`/`inventory` 的缓存 TTL 及 `status` 的过期判断，默认 60 秒；`hosts`/`host` 固定 600 秒 |
 | `TERMIUS_SECRETS_KEY` | 本地加密口令，请在第一次启动前设置 |
 | `TERMIUS_KEYRING` | 1 强制系统钥匙串，0 使用文件密钥；首次默认自动检测 |
 

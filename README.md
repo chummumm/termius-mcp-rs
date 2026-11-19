@@ -138,13 +138,50 @@ that password for the current pull without saving it.
 
 Use the IDs returned by this server: they are stable **cloud IDs**, which can
 differ from the Python client's local IDs. Duplicate labels are rejected as
-ambiguous. Snippet inventories intentionally include their script contents.
+ambiguous. Snippet inventories include their script contents by default.
 
 `hosts` and `host` automatically refresh after 600 seconds; a failed refresh may
-return cached data with `stale: true` and `sync_error`. Sign-in/password errors
-remain errors. `exec`, `files` and `inventory` refresh according to
+return cached data with `stale: true` and `sync_error`. Missing local sign-in
+state or a missing vault password still fails. `exec`, `files` and `inventory` refresh according to
 `TERMIUS_SYNC_TTL` (default 60 seconds) and do not execute on a failed refresh.
 Incomplete identities, keys, group relations and host chains fail closed.
+
+### Smaller tool responses
+
+Routine responses omit optional cloud/keyserver warning strings. Use the MCP
+tool `status` with `{"diagnostics":true}` when troubleshooting to inspect the
+warnings saved by the last sync. An actual incomplete vault is still reported
+as a positive `unreadable_entities` count by `status`, `sync`, `hosts` and
+`inventory`; zero counts are omitted. Successful single-host SSH/SFTP operations
+do not repeat unrelated global diagnostics. Operation errors and stale-cache
+warnings remain visible.
+
+The following MCP arguments reduce output only when requested. The terminal
+commands, original business fields and default result scope remain unchanged.
+
+| Tool | Optional arguments | Effect |
+| --- | --- | --- |
+| `hosts` | `query`, `limit`, `offset` | Filter first, then return a page of hosts |
+| `inventory` | `limit`, `offset`, `include_script` | Page the visible items; `include_script:false` omits snippet bodies |
+| `files` with `action:list` | `limit`, `offset` | Return a page of the sorted directory listing |
+| `exec` | `max_output_chars` | Retain at most this many characters per stdout/stderr stream; `0` retains no body |
+
+Omitting pagination returns the full list, as before. `limit` accepts 1–10000;
+`offset` defaults to 0 and applies to the current result set. A paginated response
+adds `total`, `offset` and `next_offset` (`null` when finished), while `count`
+remains the number of items returned on that page. No data is deleted.
+Pages use each call's current cache or directory listing; a cloud refresh or
+directory change between calls can change page membership. SFTP listing still
+has its existing 10000-entry directory limit.
+`include_script` defaults to `true`. `max_output_chars` accepts 0–200000 and
+defaults to 200000; discarded output sets `truncated:true` and appends the short
+truncation marker. SSH continues draining both streams to receive the exit
+status. Large `get`/`put` transfers return metadata, not the transferred content.
+
+The MCP response retains both serialized text and `structuredContent` for
+[client compatibility](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#structured-content).
+Whether a client includes both representations in model context is up to that
+client. Use the output controls above to reduce either representation.
 
 ### SSH trust, timeouts and file limits
 
@@ -172,8 +209,9 @@ Incomplete identities, keys, group relations and host chains fail closed.
 - SSH timeout closes the route and returns `timed_out: true`, `exit_code: null`
   and captured output. This does not guarantee the remote process has stopped.
   MCP cancellation closes the route and suppresses the cancelled response.
-- stdout and stderr each retain up to 200000 decoded characters with bounded
-  byte buffers. They are still drained after truncation.
+- stdout and stderr each retain up to 200000 decoded characters by default,
+  reduced by `max_output_chars` when supplied. Their bounded byte buffers shrink
+  with that budget. They are still drained after truncation.
 - SFTP inline `read`/`write` remain limited to 200000 bytes because their content
   travels inside MCP messages. File `get`/`put` have **no application-imposed
   total-size cap** and stream in 32 KiB chunks. Available disk space, filesystem
@@ -191,7 +229,7 @@ Incomplete identities, keys, group relations and host chains fail closed.
 | --- | --- |
 | `TERMIUS_DATA_DIR` | Override the independent `~/.termius-rs` directory |
 | `TERMIUS_VAULT_PASSWORD` | Supply the vault password, ahead of the remembered value |
-| `TERMIUS_SYNC_TTL` | Automatic refresh interval in seconds; `0` refreshes every read |
+| `TERMIUS_SYNC_TTL` | Cache TTL for `exec`/`files`/`inventory` and freshness shown by `status`; default `60`. `hosts`/`host` use 600 seconds |
 | `TERMIUS_SECRETS_KEY` | Passphrase protecting local state; set before the first start |
 | `TERMIUS_KEYRING` | `1` requires OS keychain, `0` selects file key; initial default detects availability |
 
