@@ -54,6 +54,21 @@ The published packages use unmodified upstream crates. Their index links to the 
 
 All build jobs have `contents: read`, and checkout credentials are not persisted. Only the final publish job has `contents: write`. Its publication step passes the short-lived `${{ github.token }}` through `GH_TOKEN`; tokens never appear in command-line arguments or log messages. No personal access token is required.
 
+Failed GitHub commands retain their exit code, the HTTP status when provided by
+`gh`, and an allowlisted error category. Raw responses, command arguments, URLs
+and environment variables are not printed. An unclassified failure is not proof
+of a permission problem; inspect the reported status before deciding how to
+recover, and do not substitute a higher-privilege credential automatically.
+
+Avoid changing `.github/workflows/` while an older source commit is awaiting
+publication. GitHub documents an additional workflow-permission requirement
+when a release target's workflow files differ from the default branch; the
+normal Actions token cannot receive that permission. See the
+[create-release API permission note](https://docs.github.com/en/rest/releases/releases#create-a-release).
+If there is no tag or draft yet, a new complete release run from reviewed `main`
+can build and publish the current source with the ordinary token. Its three
+packages must all come from that new run; do not relabel an older build's assets.
+
 The publish job starts only when all three matrix jobs succeed. It downloads artifacts from that workflow run with digest verification enabled, checks their hashes and source/target/version metadata, inspects archive members without extracting them, and verifies every recorded third-party license file. It then creates `SHA256SUMS`, `release-manifest.json`, and release notes from `CHANGELOG.md`.
 
 Only after those checks does `gh` create a lightweight `vVERSION` tag at the exact source SHA and a draft GitHub Release. The script uploads all five assets (three platform archives, the checksums file, and the combined manifest), downloads them again, and checks their hashes before publishing the draft. Tag/release behavior follows the [GitHub CLI release-create](https://cli.github.com/manual/gh_release_create) and [release-edit](https://cli.github.com/manual/gh_release_edit) interfaces.

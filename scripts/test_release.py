@@ -102,6 +102,53 @@ class ArchiveValidation(unittest.TestCase):
                 verify_archive(archive, build)
 
 
+class GitHubFailureDiagnostics(unittest.TestCase):
+    def test_failed_commands_keep_only_http_status_and_allowlisted_reason(self):
+        cases = [
+            ("gh: Bad credentials (HTTP 401)", "401", "authentication failed"),
+            ("gh: Resource not accessible by integration (HTTP 403)", "403", "integration access denied"),
+            ("gh: Refusing to allow a GitHub App to create or update workflow `private.yml` "
+             "without `workflows` permission (HTTP 403)", "403", "workflow permission required"),
+            ("gh: Reference already exists (HTTP 422)", "422", "reference already exists"),
+            ("gh: Validation Failed (HTTP 422)", "422", "unclassified"),
+            ("gh: API rate limit exceeded (HTTP 429)", "429", "rate limit exceeded"),
+            ("gh: Server Error (HTTP 500)", "500", "unclassified"),
+            ("network connection failed", "unavailable", "unclassified"),
+            ("invalid HTTP 4039 status", "unavailable", "unclassified"),
+        ]
+        secret = "synthetic-private-token"
+        for stderr, status, reason in cases:
+            with self.subTest(stderr=stderr), patch.object(
+                    publish_release.subprocess, "run",
+                    return_value=subprocess.CompletedProcess([], 1, secret, stderr + "\n" + secret)):
+                with self.assertRaises(RuntimeError) as raised:
+                    publish_release.github(["api", "private-endpoint"])
+            self.assertEqual(
+                str(raised.exception),
+                f"GitHub operation failed (exit 1; HTTP {status}; {reason}); inspect repository access and API status",
+            )
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertNotIn("private", str(raised.exception))
+
+    def test_only_explicit_missing_lookup_allows_404(self):
+        missing = subprocess.CompletedProcess([], 1, "", "gh: Not Found (HTTP 404)")
+        with patch.object(publish_release.subprocess, "run", return_value=missing):
+            self.assertIsNone(publish_release.github(["api", "missing"], allow_missing=True))
+            with self.assertRaisesRegex(RuntimeError, "HTTP 404"):
+                publish_release.github(["api", "--method", "POST", "missing"])
+        for stderr, status in [("gh: Forbidden (HTTP 403)", "403"), ("invalid HTTP 4049 status", "unavailable")]:
+            failure = subprocess.CompletedProcess([], 1, "", stderr)
+            with self.subTest(stderr=stderr), patch.object(publish_release.subprocess, "run", return_value=failure):
+                with self.assertRaisesRegex(RuntimeError, f"HTTP {status}"):
+                    publish_release.github(["api", "fixture"], allow_missing=True)
+
+    def test_successful_response_is_unchanged(self):
+        response = '{"ref":"refs/tags/v0.1.3"}'
+        with patch.object(publish_release.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, response, "")):
+            self.assertEqual(publish_release.github(["api", "fixture"]), response)
+
+
 class DraftReleaseRecovery(unittest.TestCase):
     repository = "owner/repository"
     tag = "v0.1.1"

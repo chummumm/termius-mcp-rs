@@ -21,10 +21,28 @@ def github(arguments: list[str], *, allow_missing: bool = False) -> str | None:
     result = subprocess.run(["gh", *arguments], text=True, encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode == 0:
         return result.stdout
-    if allow_missing and "HTTP 404" in result.stderr:
+    status_match = re.search(r"\bHTTP ([1-5][0-9]{2})\b", result.stderr)
+    status = status_match[1] if status_match else "unavailable"
+    if allow_missing and status == "404":
         return None
-    # Do not reflect response text or environment variables in CI logs.
-    raise RuntimeError(f"GitHub operation failed (exit {result.returncode}); inspect repository access and API status")
+    # Preserve useful failure diagnostics without reflecting response text,
+    # command arguments, URLs, or environment variables into public CI logs.
+    message = result.stderr.casefold()
+    reason = "unclassified"
+    if "workflow" in message and ("refusing to allow" in message or "workflows` permission" in message):
+        reason = "workflow permission required"
+    elif "resource not accessible by integration" in message:
+        reason = "integration access denied"
+    elif "reference already exists" in message:
+        reason = "reference already exists"
+    elif "rate limit" in message:
+        reason = "rate limit exceeded"
+    elif "bad credentials" in message:
+        reason = "authentication failed"
+    raise RuntimeError(
+        f"GitHub operation failed (exit {result.returncode}; HTTP {status}; {reason}); "
+        "inspect repository access and API status"
+    )
 
 
 def read_api(endpoint: str) -> dict | None:
