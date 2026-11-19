@@ -10,7 +10,7 @@ I reviewed `.github/workflows/release.yml`, `.github/release.json`, `.gitattribu
 
 This was a read-only production review. I wrote this report and an isolated mock test harness; I did not modify production code, create a commit or tag, call GitHub mutation APIs, or publish a release. I did not repeat the complete Rust test suite. The root and implementation author own the complete build and live Actions results.
 
-**Disposition: no unresolved publication-blocking defect found in the reviewed final pipeline.** Actual publication remains conditional on successful native builds and verification of all three platform packages in the workflow run. This review does not claim that those remote jobs or publication have already completed.
+**Initial local-review conclusion:** no publication blocker was found by the script, archive, and mocked publication checks. That conclusion missed a workflow-context validation error discovered on the first live run; the correction and verified fix are recorded below. Actual publication remains conditional on successful native builds and verification of all three platform packages. Neither the initial checks nor the correction claim that the remote builds or publication have already completed.
 
 ## Release invariants checked
 
@@ -68,4 +68,20 @@ The checked-in workflow and mocked publication tests do not establish that GitHu
 
 The exact-commit guarantee assumes the workflow's fresh checkout and reviewed build scripts; a manually modified local checkout is not equivalent evidence of a clean CI build. Hashes provide integrity checks and identify the downloaded bytes, not a publisher signature.
 
-The final reviewed pipeline satisfies the requested order: build and test the exact source on all three platforms, verify complete packages, create a matching tag and draft, upload and re-download/hash all assets, then publish. No additional blocking change is requested by this review.
+The script-level checks support the requested publication order: build and test the exact source on all three platforms, verify complete packages, create a matching tag and draft, upload and re-download/hash all assets, then publish. Workflow acceptance is a separate boundary; the first live attempt exposed the missed defect below.
+
+## Correction after the first live workflow attempt
+
+### RR1 — Release-blocking workflow context error; corrected and rechecked
+
+The root observed the first release workflow fail before creating any jobs (`jobs=[]`), while ordinary Rust CI was running. The release YAML used `${{ runner.temp }}/release-assets` in both `jobs.build.env.RELEASE_OUTPUT` and `jobs.publish.env.RELEASE_OUTPUT`.
+
+I independently checked GitHub's official [context-availability reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability). Job-level `env` permits `github`, `needs`, `strategy`, `matrix`, `vars`, `secrets`, and `inputs`; it does **not** permit `runner`. The two expressions were therefore invalid at their workflow locations. Step-level `if`, `env`, and `with` permit `runner`, so the step conditions using `runner.os` were valid. This is consistent with failure before any runner job begins.
+
+**Initial review omission:** the first review validated Python behavior, archive boundaries, publication sequencing, and ordinary YAML structure, but did not validate GitHub's location-specific expression contexts. Those checks could not establish workflow acceptance. The earlier broad no-blocker conclusion was insufficient; this section explicitly corrects it.
+
+The author replaced both job environment values with the literal workspace-relative path `dist/release-assets`, and changed the upload and download paths to the same directory (`dist/release-assets/*` for upload). I read the final four-line diff and verified that both script output locations and both artifact action paths agree. The Python entry points already resolve `RELEASE_OUTPUT` from the workspace; no publication script or credential policy changed.
+
+I also enumerated the complete expression inventory against the official per-key context rules. Before the fix, the targeted check identified exactly the two invalid job-level uses among 21 expressions. After the fix, all 17 remaining expressions used allowed contexts. Job outputs using `steps`, matrix names/runners, dependency outputs using `needs`, checkout references, dispatch input, the step token, and step `runner.os` conditions were checked. The `needs: [prepare, build]` publication gate remains intact.
+
+No `actionlint` executable was available; this verification used the official reference plus a targeted read-only context/path check, not a claim of a full third-party workflow-linter run. The newly observed workflow-context blocker is corrected in the reviewed files. The next real Actions run must still confirm workflow acceptance and complete all native build/package gates before release publication.
