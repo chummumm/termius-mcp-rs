@@ -125,11 +125,16 @@ The independent reviewer separately verified a callback exceeding 12,000 bytes
 through a real Linux PTY. The synthetic callback reached local validation with
 its final request ID intact and deliberately stopped before any cloud request.
 
-Release maintenance has five repository tests and five additional independent
+Release maintenance has ten repository tests and five additional independent
 mock publication-state checks. These are separate from the 99 Rust tests and
 do not substitute for the native platform builds. The release workflow requires
 all three platform jobs to pass before uploading a draft, then downloads and
 verifies every asset before making the release public.
+The live publication attempts exposed two automation defects: a job-level
+expression used an unavailable context, and the draft lookup used an endpoint
+for published releases. Both are recorded with their corrections in the release
+review. The second fix adds draft-listing contract tests and a guarded recovery
+path that reuses the successful native builds from their original source commit.
 
 The publication scan found no GitHub/AWS token patterns, JWTs, PEM private keys,
 user contact address or private workspace paths in the deliverable. This targeted

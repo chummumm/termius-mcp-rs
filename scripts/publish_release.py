@@ -33,13 +33,38 @@ def read_api(endpoint: str) -> dict | None:
 
 
 def existing_release(repository: str, tag: str, marker: str) -> dict | None:
-    release = read_api(f"repos/{repository}/releases/tags/{tag}")
-    if release is None:
+    # The tag endpoint returns published releases only. An authenticated release
+    # listing also includes drafts; pagination is required to resume older ones.
+    output = github(["api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"])
+    pages = json.loads(output) if output is not None else None
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError("Unexpected GitHub release listing")
+    matches = []
+    for page in pages:
+        for release in page:
+            if not isinstance(release, dict):
+                raise ValueError("Unexpected GitHub release listing")
+            if release.get("tag_name") == tag:
+                matches.append(release)
+    if not matches:
         return None
-    if not release["draft"]:
-        raise ValueError("This release is already public; refusing to modify it")
-    if marker not in (release.get("body") or ""):
-        raise ValueError("An unrelated draft already uses this version")
+    if len(matches) != 1:
+        raise ValueError("Multiple releases use this version; refusing to modify them")
+    listed = matches[0]
+    release_id = listed.get("id")
+    if type(release_id) is not int or release_id <= 0:
+        raise ValueError("Invalid GitHub release identifier")
+    release = read_api(f"repos/{repository}/releases/{release_id}")
+    # Re-read by ID so draft state, ownership marker, and assets are current.
+    # A disappearing or retagged release is an error, never permission to create
+    # or modify another release.
+    for candidate in (listed, release):
+        if not isinstance(candidate, dict) or candidate.get("id") != release_id or candidate.get("tag_name") != tag:
+            raise ValueError("Release identity changed while preparing publication")
+        if candidate.get("draft") is not True:
+            raise ValueError("This release is already public; refusing to modify it")
+        if not isinstance(candidate.get("body"), str) or marker not in candidate["body"]:
+            raise ValueError("An unrelated draft already uses this version")
     return release
 
 

@@ -56,6 +56,23 @@ A failed platform build creates no release tag. Re-run the failed jobs in the or
 
 If publication stops after making a draft, rerun the publish job in that same run. It resumes only a draft bearing this exact commit/version marker, accepts an existing tag only when it directly identifies that commit, uploads missing assets without replacing existing bytes, and verifies downloaded assets before publication. A different existing tag, unrelated draft, mismatched asset, or already public release causes failure. The workflow does not move tags or overwrite published releases. A source-code fix should use a new reviewed source commit and release version.
 
+When the publishing automation itself needs a correction after all three builds
+have succeeded, **Resume verified release** reuses those completed build outputs.
+Set `.github/release-resume.json` to the original version, source commit and
+source workflow run ID, review the automation fix, and push that manifest on
+`main` (or run the recovery workflow manually). Preparation verifies the original
+run's repository, workflow, main branch, source SHA, completed attempt, successful
+version-validation and three native-build jobs, and the existing tag's commit.
+
+The recovery job checks out publishing automation from the new triggering commit
+and the original source into a separate `release-source` directory.
+`RELEASE_SOURCE_DIR` directs version, lockfile, changelog and Git identity checks
+to that original checkout. It downloads artifacts from the verified source run
+using `actions: read`, then applies the same archive, license, draft-identity and
+upload/download hash checks. The release tag and binary source commit stay fixed;
+only the publishing implementation changes. This path does not run a new build
+or claim that a newer automation commit produced the existing binaries.
+
 Temporary Actions artifacts expire after 14 days. Published GitHub Release attachments are separate. SHA-256 provides download-integrity checking; it is not a publisher signature or a notarization claim.
 
 ## Pinned Actions

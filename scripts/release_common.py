@@ -8,7 +8,14 @@ import re
 import subprocess
 import tomllib
 
-ROOT = Path(__file__).resolve().parents[1]
+# A recovery can use corrected publishing code while retaining the exact source
+# checkout that produced the already verified binaries. The caller still has to
+# prove that checkout's HEAD equals RELEASE_COMMIT before reading its metadata.
+AUTOMATION_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("RELEASE_SOURCE_DIR", AUTOMATION_ROOT))
+if not ROOT.is_absolute():
+    ROOT = AUTOMATION_ROOT / ROOT
+ROOT = ROOT.resolve()
 BINARIES = ("termius", "termius-mcp")
 TARGETS = {
     "x86_64-unknown-linux-gnu": {"runner": "ubuntu-22.04", "extension": ".tar.gz", "suffix": ""},
