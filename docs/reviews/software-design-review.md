@@ -165,12 +165,18 @@ is required now.
 Source: `src/cloud.rs::login_error`, `rest_login`, the login branches in
 `src/tools.rs`, and `src/main.rs::needs_otp`.
 
-**Status: open, low-priority maintenance observation.**
+**Status: resolved in 0.1.1 and independently rechecked.**
 
-The cloud layer recognizes numeric OTP conditions, but the dispatcher exposes
-them using the general `login_failed` code. The CLI then recovers the condition
+The subsequent [CLI compatibility review](cli-compatibility-review.md) verified
+that `cloud::OtpRequired` survives the cloud/tool boundary as `otp_required` and
+that the CLI retries once based on this code. Tests cover both real challenges
+and unrelated errors that merely mention OTP. The original observation below
+records the pre-0.1.1 implementation and the reason for that change.
+
+The cloud layer recognized numeric OTP conditions, but the dispatcher exposed
+them using the general `login_failed` code. The CLI then recovered the condition
 by searching the displayed message for `otp`, `two-factor`, `2fa` or `authy`.
-Current messages satisfy this convention. An otherwise harmless wording or
+The messages satisfied this convention. An otherwise harmless wording or
 translation change can alter the interactive retry behavior.
 
 Recommended follow-up when changing authentication errors: preserve a stable

@@ -1,0 +1,65 @@
+[
+  {
+    "package": "delegate",
+    "version": "0.13.5",
+    "repo": "kobzol/rust-delegate",
+    "ref": "b129d4cbf4cc499eff7743365dcb0fe5d8d2e820",
+    "path": "LICENSE-APACHE",
+    "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+    "url": "https://github.com/kobzol/rust-delegate/blob/b129d4cbf4cc499eff7743365dcb0fe5d8d2e820/LICENSE-APACHE"
+  },
+  {
+    "package": "delegate",
+    "version": "0.13.5",
+    "repo": "kobzol/rust-delegate",
+    "ref": "b129d4cbf4cc499eff7743365dcb0fe5d8d2e820",
+    "path": "LICENSE-MIT",
+    "sha256": "be7ee8aa49dc586023669a0c600a0536fce6a9f61264a53a67cdd842564ed899",
+    "url": "https://github.com/kobzol/rust-delegate/blob/b129d4cbf4cc499eff7743365dcb0fe5d8d2e820/LICENSE-MIT"
+  },
+  {
+    "package": "russh",
+    "version": "0.65.2",
+    "repo": "Eugeny/russh",
+    "ref": "56a999871aa134072e4f2a7395fe2de313870e21",
+    "path": "LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "url": "https://github.com/Eugeny/russh/blob/56a999871aa134072e4f2a7395fe2de313870e21/LICENSE.txt"
+  },
+  {
+    "package": "russh-cryptovec",
+    "version": "0.62.0",
+    "repo": "Eugeny/russh",
+    "ref": "907c732562c5732aad6c140dba958eafddc41ba0",
+    "path": "LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "url": "https://github.com/Eugeny/russh/blob/907c732562c5732aad6c140dba958eafddc41ba0/LICENSE.txt"
+  },
+  {
+    "package": "russh-util",
+    "version": "0.52.0",
+    "repo": "Eugeny/russh",
+    "ref": "3d09c20c52a542ffa327723d3a44cb1edd9b0ca4",
+    "path": "LICENSE-2.0.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "url": "https://github.com/Eugeny/russh/blob/3d09c20c52a542ffa327723d3a44cb1edd9b0ca4/LICENSE-2.0.txt"
+  },
+  {
+    "package": "clipboard-win",
+    "version": "5.4.3",
+    "repo": "DoumanAsh/clipboard-win",
+    "ref": "ed27008ae5d1f10cfbb266de039f0fb35fd05a56",
+    "path": "LICENSE",
+    "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+    "url": "https://github.com/DoumanAsh/clipboard-win/blob/ed27008ae5d1f10cfbb266de039f0fb35fd05a56/LICENSE"
+  },
+  {
+    "package": "pageant",
+    "version": "0.2.2",
+    "repo": "Eugeny/russh",
+    "ref": "a3766cca2223f851df786e88f823ea08dabfbdea",
+    "path": "LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "url": "https://github.com/Eugeny/russh/blob/a3766cca2223f851df786e88f823ea08dabfbdea/LICENSE.txt"
+  }
+]

@@ -1,6 +1,6 @@
 [package]
 name = "termius-mcp-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
 description = "Native Rust MCP server for Termius Cloud, SSH and SFTP"
@@ -9,14 +9,19 @@ repository = "https://github.com/chummumm/termius-mcp-rs"
 readme = "README.md"
 keywords = ["mcp", "termius", "ssh", "sftp"]
 categories = ["command-line-utilities", "network-programming"]
+default-run = "termius"
 
 [lib]
 name = "termius_mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "termius-mcp-rs"
+name = "termius"
 path = "src/main.rs"
+
+[[bin]]
+name = "termius-mcp"
+path = "src/bin/termius-mcp.rs"
 
 [dependencies]
 anyhow = "1"
@@ -41,6 +46,7 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rpassword = "7"
 rustix = { version = "1", features = ["process"] }
+rustyline = { version = "17.0.2", default-features = false }
 russh = { version = "0.65.2", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "3"
 serde = { version = "1", features = ["derive"] }

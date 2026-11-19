@@ -1,3 +1,5 @@
+#[doc(hidden)]
+pub mod cli;
 pub mod cloud;
 pub mod crypto;
 pub mod inventory;

@@ -12,7 +12,7 @@ or used. The Rust repository does not redistribute the input archive.
 | --- | --- |
 | `mcp/protocol.py`, `mcp/server.py` | `src/protocol.rs`: bounded framing, lifecycle, concurrent calls and cancellation |
 | `mcp/tools.py`, `sync.py`, `session.py` | `src/tools.rs`, `src/tool_catalog.json`: same ten tools and safe envelopes |
-| `cli.py`, `runtime.py` | `src/main.rs`: CLI, isolated data directory and default stdio mode |
+| `cli.py`, `runtime.py` | `src/cli.rs`, `src/main.rs`: original CLI contract, isolated data directory and default stdio mode |
 | `core/api.py`, `account/managers.py`, cloud controllers | `src/cloud.rs`: fixed TLS endpoints, login, keyring and full sync |
 | `srp_session.py`, `grpc_login.py`, `sodium.py`, `cryptor.py` | `src/crypto.rs`, `src/cloud.rs`: SRP, token unwrap and authenticated decryption |
 | cloud transformers, models, `ssh_merge.py` | `src/inventory.rs`: raw cloud-ID relationships, inheritance and safe routes |
@@ -26,6 +26,13 @@ OTP support, 600-second host cache behavior, configurable refresh TTL,
 concurrent SSH operations, timeout output and cancellation semantics are kept.
 All nine SFTP operations are implemented. Group inheritance and visible identity
 precedence are retained, including shared-identity linking and ordered host chains.
+
+Release 0.1.1 restores the Python package's `termius` and `termius-mcp` executable
+names and terminal interface: `login [google|email]`, `-u/--username`, `--otp`,
+`--no-remember`, `status` and `logout`. The CLI prints the original human-readable
+messages. There is no `sync` terminal subcommand or `termius-mcp-rs` executable;
+`sync` remains an MCP tool. No arguments start the stdio server. Callback and OTP
+input follow the source's visible prompts, while vault passwords use hidden input.
 
 Cloud crypto follows the source implementation: RNCryptor v3 is
 PBKDF2-HMAC-SHA1 plus AES-256-CBC/HMAC-SHA256; Sodium v4/v5 uses
@@ -43,7 +50,7 @@ matched the deterministic fixture's modulus, client public value and both proofs
 
 | Area | Rust behavior and reason |
 | --- | --- |
-| Name and local state | `termius-mcp-rs`, `~/.termius-rs`; independent installation avoids overwriting Python state |
+| Local state | `~/.termius-rs`, configurable through `TERMIUS_DATA_DIR`; separate from Python state |
 | IDs | Stable cloud IDs; call `hosts` again instead of reusing old locally assigned IDs |
 | State migration | No automatic Python/Fernet migration; fresh login is required |
 | Secret storage | Versioned encrypted JSON envelope, not SQLite; Argon2id-derived key and explicit, remembered backend; no machine-ID-only sealing |

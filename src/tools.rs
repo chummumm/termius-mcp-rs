@@ -50,6 +50,15 @@ fn error(code: &'static str, e: impl std::fmt::Display) -> ToolError {
     ToolError::new(code, e.to_string())
 }
 
+fn login_failure(e: anyhow::Error) -> ToolError {
+    let code = if e.downcast_ref::<cloud::OtpRequired>().is_some() {
+        "otp_required"
+    } else {
+        "login_failed"
+    };
+    error(code, e)
+}
+
 pub struct Runtime {
     store: Mutex<Store>,
     mutation: Mutex<()>,
@@ -165,7 +174,7 @@ impl Runtime {
                 let password = required_secret(args, "password")?;
                 let session = cloud::login_email(username, password, args["otp"].as_str())
                     .await
-                    .map_err(|e| error("login_failed", e))?;
+                    .map_err(login_failure)?;
                 let remember = args["remember"].as_bool().unwrap_or(true);
                 let out = login_summary(&session, remember);
                 next.session = Some(session);
@@ -193,7 +202,7 @@ impl Runtime {
                     args["otp"].as_str(),
                 )
                 .await
-                .map_err(|e| error("login_failed", e))?;
+                .map_err(login_failure)?;
                 let remember = args["remember"].as_bool().unwrap_or(true);
                 let out = login_summary(&session, remember);
                 let mut next = previous.clone();
@@ -481,6 +490,14 @@ pub fn validate(name: &str, args: &Value) -> Result<(), ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn otp_retry_code_depends_on_the_challenge_type_not_error_text() {
+        let challenge = anyhow::Error::new(cloud::OtpRequired).context("Sign-in challenge");
+        assert_eq!(login_failure(challenge).code, "otp_required");
+        let ordinary = anyhow::anyhow!("A non-challenge error mentioning OTP or 2FA");
+        assert_eq!(login_failure(ordinary).code, "login_failed");
+    }
+
     #[test]
     fn validation_does_not_coerce_destructive_arguments() {
         assert!(

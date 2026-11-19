@@ -12,7 +12,7 @@ SFTP 使用 `russh-sftp`。
 
 ## 当前状态
 
-这是 Rust 初始版本，包含独立密码学测试向量、MCP 协议集成测试和临时本地
+Rust 版本包含独立密码学测试向量、MCP 协议集成测试和临时本地
 OpenSSH 服务实测。**真实 Termius 账号登录、Google SSO、团队保险库同步及桌面
 系统钥匙串仍需真实环境验证。** 云端协议来自兼容 Termius 桌面 10.0.6 的上传
 源码，不代表官方承诺稳定的公共 API。
@@ -21,17 +21,27 @@ OpenSSH 服务实测。**真实 Termius 账号登录、Google SSO、团队保险
 
 ## 安装
 
+从 [GitHub Releases](https://github.com/chummumm/termius-mcp-rs/releases/latest)
+下载对应系统的编译包，解压后将所在目录加入 `PATH`，或在 MCP 客户端中使用
+可执行文件的绝对路径。每个包都提供 Python 原版的 `termius`、`termius-mcp`
+两个入口，Windows 下扩展名为 `.exe`。运行编译包不需要安装 Rust 或 Python。
+发布页附有 `SHA256SUMS`，压缩包内包含第三方依赖许可。
+
+### 从源码编译
+
 需要 Rust **1.89 或更高版本**。从 [rustup.rs](https://rustup.rs/) 安装工具链后：
 
 ```sh
 git clone https://github.com/chummumm/termius-mcp-rs.git
 cd termius-mcp-rs
 cargo install --path . --locked
-termius-mcp-rs login
+termius login
 ```
 
-新命令叫 `termius-mcp-rs`，不会替换原来的 `termius`。新数据目录为
-**`~/.termius-rs`**，不会读取、迁移或改动 Python 版的 `~/.termius`，需要重新登录。
+与 Python 原版一致，`termius` 和 `termius-mcp` 都运行同一套 CLI 和 stdio 服务，
+不提供 `termius-mcp-rs` 命令。如果同时安装了 Python 版，用绝对路径或 `PATH`
+顺序选择要运行的程序。Rust 数据目录仍为 **`~/.termius-rs`**，与 Python 的
+`~/.termius` 分开，需要重新登录。可用 `TERMIUS_DATA_DIR` 环境变量另选目录。
 
 ### 配置 MCP 客户端
 
@@ -41,7 +51,7 @@ termius-mcp-rs login
 {
   "mcpServers": {
     "termius": {
-      "command": "termius-mcp-rs",
+      "command": "termius",
       "args": []
     }
   }
@@ -53,7 +63,7 @@ Codex 配置示例：
 
 ```toml
 [mcp_servers.termius]
-command = "termius-mcp-rs"
+command = "termius"
 args = []
 startup_timeout_sec = 30.0
 tool_timeout_sec = 240.0
@@ -66,16 +76,21 @@ tool_timeout_sec = 240.0
 ## 登录与同步
 
 ```sh
-termius-mcp-rs login email -u you@example.com
-termius-mcp-rs login google
-termius-mcp-rs status
-termius-mcp-rs sync
-termius-mcp-rs logout
+termius login
+termius login email -u you@example.com
+termius login google
+termius status
+termius logout
 ```
 
+命令名、登录参数、交互提示以及状态和退出登录的文字输出均按 Python 源码恢复。
+不指定登录方式的 `termius login` 会询问 Google 或邮箱；`login -u 邮箱` 直接选择
+邮箱登录。原版的 **`sync` 是 MCP 工具，不是终端子命令**。两个程序都在不加参数
+时启动 stdio MCP 服务。
+
 邮箱登录输入 Termius 账号/保险库密码。Google 登录输入 **Termius 保险库加密
-密码，不是 Google 密码**。密码和 SSO 回调输入不会回显。需要双因素认证时
-终端会提示输入验证码，也可以使用 `--otp`。
+密码，不是 Google 密码**。密码输入不回显；SSO 回调和 OTP 使用原版可见输入提示，
+不会保存到命令历史。需要双因素认证时终端会提示输入验证码，也可以使用 `--otp`。
 
 Google 流程会给出网页登录地址。完成登录后，不打开 Termius 桌面程序，将
 `termius://app/continue-sso?...` 回调粘贴到终端。回调必须匹配本次登录请求，
@@ -84,8 +99,8 @@ Google 流程会给出网页登录地址。完成登录后，不打开 Termius �
 
 默认在加密状态文件中记住保险库密码。`login --no-remember` 保存登录令牌，
 同时清除以前记住的密码；后续可向 MCP 进程提供 `TERMIUS_VAULT_PASSWORD`，
-或调用 `sync` 工具时传密码。`sync --password` 手动输入密码，配合
-`--no-remember` 可以只在本次同步使用。
+或调用 `sync` MCP 工具时传 `password`。该工具的 `remember: false` 表示只在
+本次同步使用所提供的密码。
 
 ## 功能
 
@@ -144,7 +159,7 @@ Rust 版使用稳定的 **云端 ID**，可能与 Python 版的本地 ID 不同�
 
 | 环境变量 | 用途 |
 | --- | --- |
-| `TERMIUS_DATA_DIR` | 数据目录，也可使用 `--data-dir` |
+| `TERMIUS_DATA_DIR` | 覆盖默认的 `~/.termius-rs` 数据目录 |
 | `TERMIUS_VAULT_PASSWORD` | 保险库密码，优先于记住的密码 |
 | `TERMIUS_SYNC_TTL` | 自动同步间隔，秒；0 表示每次刷新 |
 | `TERMIUS_SECRETS_KEY` | 本地加密口令，请在第一次启动前设置 |

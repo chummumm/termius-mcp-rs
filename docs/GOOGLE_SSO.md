@@ -1,6 +1,6 @@
 # Copy the Termius desktop SSO callback
 
-Start `termius-mcp-rs login google`, open the printed URL, and complete sign-in.
+Start `termius login google`, open the printed URL, and complete sign-in.
 When asked to launch the Termius desktop app, decline so that you can copy the
 callback into the Rust CLI. A callback started in another login session will
 not match the stored request ID.
@@ -31,7 +31,7 @@ the callback locally; it does not send the callback elsewhere.
   const callback = 'termius://app/continue-sso?email=' + encodeURIComponent(user.email)
     + '&firebaseToken=' + encodeURIComponent(user.stsTokenManager.accessToken)
     + '&requestId=' + encodeURIComponent(requestId);
-  prompt('Copy this URL into termius-mcp-rs login', callback);
+  prompt('Copy this URL into termius login', callback);
 })();
 ```
 

@@ -47,6 +47,17 @@ impl fmt::Display for NotMigrated {
 }
 impl std::error::Error for NotMigrated {}
 
+/// A structured authentication challenge, separate from the displayed message.
+/// The CLI may request one OTP retry; other cloud errors must not trigger it.
+#[derive(Debug)]
+pub(crate) struct OtpRequired;
+impl fmt::Display for OtpRequired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("OTP is required or invalid; retry login with an authenticator code")
+    }
+}
+impl std::error::Error for OtpRequired {}
+
 fn client() -> Result<Client> {
     let mut headers = header::HeaderMap::new();
     headers.insert(
@@ -383,7 +394,7 @@ async fn rest_login(
         }
     }
     if status.as_u16() == 487 || matches!(value["code"].as_i64(), Some(3 | 10)) {
-        bail!("OTP is required or invalid; retry login with an authenticator code");
+        return Err(OtpRequired.into());
     }
     if status.as_u16() == 490 {
         bail!("Termius Cloud rejected this client version");
@@ -466,10 +477,10 @@ fn login_error(error: &Value) -> anyhow::Error {
     if code == Some(7) || key == "NOT_MIGRATED" {
         return NotMigrated.into();
     }
+    if matches!(code, Some(3 | 10)) || matches!(key, "OTP_TOKEN_REQUIRED" | "OTP_TOKEN_ERROR") {
+        return OtpRequired.into();
+    }
     let message = match (code, key) {
-        (Some(3 | 10), _) | (_, "OTP_TOKEN_REQUIRED" | "OTP_TOKEN_ERROR") => {
-            "OTP is required or invalid; retry login with an authenticator code"
-        }
         (Some(2), _) | (_, "UNAUTHENTICATED") => {
             "Termius authentication failed; for Google SSO start login again"
         }
@@ -1049,6 +1060,23 @@ mod tests {
         assert_eq!(payload["public_data"], "DEADBEEF");
         server.await.unwrap();
     }
+    #[test]
+    fn otp_challenges_keep_their_type_without_echoing_upstream_messages() {
+        for challenge in [
+            json!({"code": 3, "message": "secret upstream response"}),
+            json!({"code": 10}),
+            json!({"key": "OTP_TOKEN_REQUIRED"}),
+            json!({"key": "OTP_TOKEN_ERROR"}),
+        ] {
+            let error = login_error(&challenge).context("Authentication challenge");
+            assert!(error.downcast_ref::<OtpRequired>().is_some());
+            assert!(error.downcast_ref::<NotMigrated>().is_none());
+            assert!(!format!("{error:#}").contains("secret upstream response"));
+        }
+        let ordinary = login_error(&json!({"code": 2, "message": "requires otp"}));
+        assert!(ordinary.downcast_ref::<OtpRequired>().is_none());
+    }
+
     #[tokio::test]
     async fn socket_error_only_not_migrated_allows_legacy_fallback() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

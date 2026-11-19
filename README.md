@@ -12,7 +12,7 @@ The executable has no Python runtime dependency and does not shell out to
 
 ## Status
 
-This is an initial Rust release. Offline cryptographic compatibility tests,
+This Rust port includes offline cryptographic compatibility tests,
 MCP integration tests and disposable localhost OpenSSH tests are included.
 **Live Termius account login, Google SSO, team-vault synchronization and desktop
 OS-keychain integration still need validation with real accounts.** The service
@@ -22,7 +22,17 @@ snapshot, not a public supported Termius API contract.
 See [the porting notes](docs/PORTING.md) and [independent review](docs/REVIEW.md)
 for the exact scope and limitations.
 
-## Build and install
+## Install
+
+Download a compiled archive for your system from
+[GitHub Releases](https://github.com/chummumm/termius-mcp-rs/releases/latest).
+Each archive contains the original Python package's two executable names:
+`termius` and `termius-mcp` (`.exe` on Windows). Extract the archive and put its
+directory on `PATH`, or use an absolute path in your MCP client. No Rust or
+Python installation is needed to run these binaries. `SHA256SUMS` accompanies
+the release, and each archive includes dependency license notices.
+
+### Build from source
 
 Rust **1.89 or newer** and Cargo are required. Install Rust from
 [rustup.rs](https://rustup.rs/), then:
@@ -31,13 +41,15 @@ Rust **1.89 or newer** and Cargo are required. Install Rust from
 git clone https://github.com/chummumm/termius-mcp-rs.git
 cd termius-mcp-rs
 cargo install --path . --locked
-termius-mcp-rs --version
-termius-mcp-rs login
+termius login
 ```
 
-The binary name is `termius-mcp-rs`. It does not replace the original `termius`
-command. Its data directory is **`~/.termius-rs`**, separate from Python's
-`~/.termius`. Sign in again; existing Python data is not automatically migrated.
+Both `termius` and `termius-mcp` run the same CLI and stdio server, as in the
+Python package. There is no `termius-mcp-rs` executable. If the Python package is
+also installed, select the Rust executable by its absolute path or `PATH` order.
+The Rust data directory is **`~/.termius-rs`**, separate from Python's `~/.termius`.
+Sign in again; existing Python data is not automatically migrated. Set
+`TERMIUS_DATA_DIR` to use a different Rust data directory.
 
 ### MCP configuration
 
@@ -48,7 +60,7 @@ command and must not appear in the MCP client's `args`.
 {
   "mcpServers": {
     "termius": {
-      "command": "termius-mcp-rs",
+      "command": "termius",
       "args": []
     }
   }
@@ -62,7 +74,7 @@ For a Codex client configuration:
 
 ```toml
 [mcp_servers.termius]
-command = "termius-mcp-rs"
+command = "termius"
 args = []
 startup_timeout_sec = 30.0
 tool_timeout_sec = 240.0
@@ -77,14 +89,21 @@ different `2026-07-28` protocol. Output is newline-delimited JSON-RPC; legacy
 ## Sign in
 
 ```sh
-termius-mcp-rs login email -u you@example.com
-termius-mcp-rs login google
-termius-mcp-rs status
-termius-mcp-rs sync
-termius-mcp-rs logout
+termius login
+termius login email -u you@example.com
+termius login google
+termius status
+termius logout
 ```
 
-Passwords and pasted SSO callback URLs are entered without terminal echo.
+The command names, login arguments, interactive prompts and human-readable
+status/logout messages follow the Python source. `login` without a method asks
+you to choose Google or email; `login -u you@example.com` selects email. As in
+Python, **`sync` is an MCP tool, not a terminal subcommand**. Starting either
+executable without arguments starts the stdio MCP server.
+
+Passwords are entered without terminal echo. Callback URLs and OTP use the
+original visible input prompts; they are not saved to command history.
 For email login, use the Termius account/vault password. For Google login, use
 the **Termius vault encryption password**, not the Google password. The CLI
 prompts for an authenticator code when required; `--otp` is also accepted.
@@ -98,9 +117,9 @@ authenticated state. Treat the callback as a credential.
 
 By default the vault password is remembered inside encrypted local state.
 `login --no-remember` saves the DeviceToken but removes the remembered password.
-Supply `TERMIUS_VAULT_PASSWORD` to the MCP process, or use the `sync` tool with a
-password when needed. `sync --password` prompts for a replacement password;
-`sync --password --no-remember` uses it for that pull without saving it.
+Supply `TERMIUS_VAULT_PASSWORD` to the MCP process, or call the `sync` MCP tool
+with a `password` when needed. Set its `remember` argument to `false` to use
+that password for the current pull without saving it.
 
 ## Tools
 
@@ -170,7 +189,7 @@ Incomplete identities, keys, group relations and host chains fail closed.
 
 | Setting | Purpose |
 | --- | --- |
-| `TERMIUS_DATA_DIR` / `--data-dir` | Override the independent `~/.termius-rs` directory |
+| `TERMIUS_DATA_DIR` | Override the independent `~/.termius-rs` directory |
 | `TERMIUS_VAULT_PASSWORD` | Supply the vault password, ahead of the remembered value |
 | `TERMIUS_SYNC_TTL` | Automatic refresh interval in seconds; `0` refreshes every read |
 | `TERMIUS_SECRETS_KEY` | Passphrase protecting local state; set before the first start |

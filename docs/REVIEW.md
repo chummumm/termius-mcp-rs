@@ -1,6 +1,6 @@
 # Independent review and release verification
 
-Date: **2026-11-19** · Initial Rust release: **0.1.0**
+Date: **2026-11-19** · Rust release: **0.1.1**
 
 Two separate AI reviewers, neither of whom implemented production code, reviewed
 this Rust port against the uploaded Python Termius MCP 3.2.0 snapshot. They
@@ -16,9 +16,31 @@ certification or a real-account acceptance test.
 - [Source-compatibility review](reviews/compatibility-review.md)
 - [Code Complete construction review](reviews/code-complete-review.md)
 - [A Philosophy of Software Design review](reviews/software-design-review.md)
+- [Python CLI compatibility review](reviews/cli-compatibility-review.md)
+- [Binary release pipeline review](reviews/release-review.md)
 
-The first two reports document the initial baseline. The latter two review the
-current connection-policy, streaming-transfer and transport-lifecycle changes.
+The first two reports document the initial baseline. The construction and design
+reports review connection policy, streaming transfers and transport lifetime.
+The CLI report independently compares the 0.1.1 terminal interface with the
+uploaded Python entry points, parser and login conversation.
+The release report independently checks publication permissions, exact-version
+and commit validation, license materials, immutable tags and upload verification.
+
+## Python CLI restored in 0.1.1
+
+The shipped commands are exactly the two entry-point names in Python's
+`setup.py`: `termius` and `termius-mcp`. The initial `termius-mcp-rs` executable
+and added terminal `sync`, `--data-dir` and `--version` options were removed.
+`sync` remains an MCP tool; `TERMIUS_DATA_DIR` remains an environment setting.
+The original login arguments, method selection, prompt text, visible callback
+and OTP input, hidden vault-password input, human-readable status/logout output,
+and no-argument stdio entry are restored.
+
+Authentication challenges now retain a typed OTP condition through the cloud
+and tool layers. The CLI requests one OTP retry only for `otp_required` when no
+non-empty OTP was already supplied. This resolves the earlier design report's
+N2 observation: wording changes can no longer cause or suppress the retry.
+Raw terminal line editing accepts long Google callbacks without storing history.
 
 ## Requested follow-up and skill-based review
 
@@ -38,11 +60,9 @@ current connection-policy, streaming-transfer and transport-lifecycle changes.
   work. The implementer fixed it by observing writer completion in the input
   loop and entering the existing shared cleanup path. Independent tests verify
   termination and closure of an actual stalled SSH connection.
-- The cloud-sync comment now documents the existing atomic session-plus-snapshot
-  commit invariant. One low-priority maintenance observation remains: the CLI's
-  OTP retry classification depends on normalized error wording. Current messages
-  work; a stable OTP discriminator is recommended when authentication errors are
-  next changed. This is not a reproduced current login failure.
+- The cloud-sync comment documents the existing atomic session-plus-snapshot
+  commit invariant. The earlier low-priority OTP classification observation was
+  addressed in 0.1.1 with the typed challenge described above.
 
 The construction reviewer independently checked the complete updated inventory
 and transport policy, a 52,461,691-byte upload/download with streaming SHA-256,
@@ -69,19 +89,19 @@ reviewed code paths. The reports include exact scope, reproductions and limits.
 ## Final local verification
 
 The root ran the complete post-follow-up test suite on Linux with Rust 1.100.0,
-and checked all targets against Rust 1.89.0. The 64 executed tests consist of:
+and checked all targets against Rust 1.89.0. The 99 executed tests consist of:
 
 | Suite | Passed |
 | --- | ---: |
-| Library unit tests | 45 |
-| CLI parser test | 1 |
+| Library unit tests, including 26 CLI conversation tests | 73 |
+| Independent CLI process regressions covering both original executables | 8 |
 | Independent Code Complete regressions | 3 |
 | Independent compatibility regressions | 2 |
 | Full MCP transport/dispatch integration | 3 |
 | Independent security/protocol regressions | 4 |
 | Independent software-design regressions | 2 |
 | Real localhost OpenSSH integration (explicitly enabled) | 4 |
-| **Total** | **64** |
+| **Total** | **99** |
 
 The four OpenSSH tests are intentionally ignored in the default test invocation
 because they require `sshd`/`ssh-keygen`; they were explicitly enabled and passed.
@@ -93,10 +113,23 @@ than the former 50 MiB cap, partial timeout output and safe local replacement.
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --all-targets --locked`: 60 passed, 4 OpenSSH tests deferred.
+- `cargo test --all-targets --locked`: 95 passed, 4 OpenSSH tests deferred.
 - `cargo test --test ssh_openssh --locked -- --ignored`: 4 passed.
 - `cargo +1.89.0 check --all-targets --locked`: passed.
-- `cargo build --release --locked`: passed.
+- `cargo build --release --locked --bins`: passed for both original executables.
+- Release-binary smoke checks: both `termius` and `termius-mcp` passed original
+  CLI help/status and MCP initialization, catalog and ping checks; the returned
+  MCP version was checked against 0.1.1.
+
+The independent reviewer separately verified a callback exceeding 12,000 bytes
+through a real Linux PTY. The synthetic callback reached local validation with
+its final request ID intact and deliberately stopped before any cloud request.
+
+Release maintenance has five repository tests and five additional independent
+mock publication-state checks. These are separate from the 99 Rust tests and
+do not substitute for the native platform builds. The release workflow requires
+all three platform jobs to pass before uploading a draft, then downloads and
+verifies every asset before making the release public.
 
 The publication scan found no GitHub/AWS token patterns, JWTs, PEM private keys,
 user contact address or private workspace paths in the deliverable. This targeted
@@ -108,9 +141,9 @@ Deterministic cryptographic fixture values are public synthetic test data.
 `cargo audit` 0.23.0 completed on 2026-11-19 against the final lockfile:
 **zero known vulnerabilities and four informational unmaintained-package
 warnings**. This is a point-in-time advisory database check, not a proof of
-dependency security. The database contained 1,541 advisories at commit
-`5c6e809b6c79eea026dd79324477f7d5d020c452` (updated
-2026-11-19T09:42:17+01:00).
+dependency security. The database contained 1,550 advisories at commit
+`7133866a6b44d6d3e1994ae6a48a296553c3c3da` (updated
+2026-11-19T09:55:47+01:00).
 
 | Package | Advisory | Dependency path / disposition |
 | --- | --- | --- |
@@ -125,12 +158,12 @@ requires upstream backend adoption or a separately reviewed backend change;
 this release does not introduce an unreviewed fork or prerelease dependency.
 The direct timestamp-library migration was independently reviewed and the full
 test, lint, MSRV and release-build gates were rerun afterward.
-The follow-up connection and transfer changes do not change `Cargo.toml` or
-`Cargo.lock`; this audit applies to the same dependency graph.
+The 0.1.1 audit was rerun after adding `rustyline` 17.0.2 for source-compatible
+long terminal input, and applies to that updated lockfile.
 
 ### Reviewed source fingerprint
 
-SHA-256: `72f1d71b043687593c4cced3e5983ad85823c96e054aac061d605b8eab13d3c4`
+SHA-256: `eb8e430ab4018e26c6cb5e8006f43a61aecb86c16c62ad596169b40a7736f135`
 
 The digest covers sorted file paths and bytes under `src/` and `tests/`, plus
 `Cargo.toml` and `Cargo.lock`; each path and content is followed by a NUL byte.
