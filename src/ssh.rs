@@ -548,7 +548,13 @@ async fn authenticate_agent<S: AsyncRead + AsyncWrite + Unpin + Send>(
     Ok(false)
 }
 
-fn host_key_verification(spec: &ConnectionSpec) -> Value {
+fn host_key_verification(spec: &ConnectionSpec) -> Option<Value> {
+    // Hide the default all-disabled diagnostic, but retain every hop whenever
+    // strict checking is configured so mixed routes keep their positional map.
+    if !spec.target.strict_host_key_check && spec.jumps.iter().all(|hop| !hop.strict_host_key_check)
+    {
+        return None;
+    }
     let mode = |endpoint: &Endpoint| {
         if endpoint.strict_host_key_check {
             "strict"
@@ -556,7 +562,9 @@ fn host_key_verification(spec: &ConnectionSpec) -> Value {
             "disabled"
         }
     };
-    json!({"target":mode(&spec.target),"jumps":spec.jumps.iter().map(mode).collect::<Vec<_>>()})
+    Some(
+        json!({"target":mode(&spec.target),"jumps":spec.jumps.iter().map(mode).collect::<Vec<_>>()}),
+    )
 }
 
 pub async fn run_exec(
@@ -642,12 +650,13 @@ pub async fn run_exec(
     }
     let (stdout, out_truncated) = out.finish("stdout");
     let (stderr, err_truncated) = err.finish("stderr");
-    Ok(
-        json!({"host":spec.label,"address":spec.target.address,"username":spec.target.username,
+    let mut result = json!({"host":spec.label,"address":spec.target.address,"username":spec.target.username,
         "command":command,"exit_code":exit_code,"stdout":stdout,"stderr":stderr,
-        "truncated":out_truncated || err_truncated,"timed_out":timed_out,"timeout":timeout,
-        "host_key_verification":host_key_verification(spec)}),
-    )
+        "truncated":out_truncated || err_truncated,"timed_out":timed_out,"timeout":timeout});
+    if let Some(verification) = host_key_verification(spec) {
+        result["host_key_verification"] = verification;
+    }
+    Ok(result)
 }
 
 fn sf<T>(result: std::result::Result<T, SftpError>) -> Result<T> {
@@ -1288,7 +1297,9 @@ pub async fn run_files(
         result["address"] = json!(spec.target.address);
         result["username"] = json!(spec.target.username);
         result["action"] = json!(action);
-        result["host_key_verification"] = host_key_verification(spec);
+        if let Some(verification) = host_key_verification(spec) {
+            result["host_key_verification"] = verification;
+        }
         if result.get("ok").is_none() {
             result["ok"] = json!(true);
         }
@@ -1306,6 +1317,64 @@ pub async fn run_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verification_spec(target: bool, jumps: &[bool]) -> ConnectionSpec {
+        let endpoint = |strict_host_key_check| Endpoint {
+            address: "fixture.example.invalid".into(),
+            port: 22,
+            username: Some("fixture".into()),
+            password: None,
+            private_key: None,
+            passphrase: None,
+            strict_host_key_check,
+            known_host_keys: vec![],
+            connect_timeout: 30,
+            keep_alive: 0,
+        };
+        ConnectionSpec {
+            host_id: json!(1),
+            label: "verification fixture".into(),
+            target: endpoint(target),
+            jumps: jumps.iter().copied().map(endpoint).collect(),
+        }
+    }
+
+    #[test]
+    fn all_disabled_verification_diagnostics_are_omitted() {
+        for jumps in [vec![], vec![false], vec![false, false, false]] {
+            assert_eq!(
+                host_key_verification(&verification_spec(false, &jumps)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn strict_verification_diagnostics_preserve_the_full_ordered_route() {
+        for (target, jumps, expected) in [
+            (true, vec![], json!({"target":"strict","jumps":[]})),
+            (
+                true,
+                vec![false, true],
+                json!({"target":"strict","jumps":["disabled","strict"]}),
+            ),
+            (
+                false,
+                vec![false, true, false],
+                json!({"target":"disabled","jumps":["disabled","strict","disabled"]}),
+            ),
+            (
+                true,
+                vec![true, true],
+                json!({"target":"strict","jumps":["strict","strict"]}),
+            ),
+        ] {
+            assert_eq!(
+                host_key_verification(&verification_spec(target, &jumps)),
+                Some(expected)
+            );
+        }
+    }
 
     #[test]
     fn streamed_transfer_offsets_are_checked_at_the_protocol_boundary() {

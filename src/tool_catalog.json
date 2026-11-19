@@ -2,13 +2,13 @@
   {
     "name": "status",
     "title": "Termius Status",
-    "description": "Show login state, last sync time, cache freshness, remembered-password status and inventory counts. Does not sync. Use diagnostics=true only to troubleshoot cached cloud warnings.",
+    "description": "Show login/cache state and inventory counts without syncing. Team accounts see cached team-key failures; diagnostics=true includes other cached cloud warnings.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "diagnostics": {
           "type": "boolean",
-          "description": "Include detailed warnings from the last cloud sync. Default false."
+          "description": "Include other cached cloud warnings. Team-key warnings are shown only for team accounts. Default false."
         }
       }
     },
@@ -188,7 +188,7 @@
   {
     "name": "host",
     "title": "Host Details",
-    "description": "One host plus merged SSH settings and an ssh(1) command when representable. Pulls Termius Cloud when the local cache is older than 600 seconds. If that pull fails, returns the local cache and sets stale to true. name is id or label. Does not return passwords or private keys.",
+    "description": "One host plus merged SSH settings and a reference ssh(1) command when representable. agent_forwarding and the command use the account preference; native exec/files do not forward agents. Pulls when cache is older than 600 seconds; on failure returns stale local data. name is id or label. No passwords or private keys.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -213,7 +213,7 @@
   {
     "name": "exec",
     "title": "Run SSH Command",
-    "description": "Execute a remote command over SSH using saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). Use max_output_chars for verbose commands. timeout closes the route and returns timed_out=true, exit_code=null and captured output; the remote process may continue. Returns stdout, stderr, exit_code, truncated and configured host_key_verification modes. Unspecified key checking is disabled; inherited true still verifies. Never echo unrequested secrets.",
+    "description": "Execute a remote command over SSH using saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). Use max_output_chars for verbose commands. timeout closes the route and returns timed_out=true, exit_code=null and captured output; the remote process may continue. Returns stdout, stderr, exit_code and truncated. host_key_verification describes configured modes only when any endpoint is strict. Unspecified key checking is disabled; inherited true still verifies. Never echo unrequested secrets.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -258,7 +258,7 @@
   {
     "name": "files",
     "title": "SFTP Files",
-    "description": "SFTP via saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). list supports limit/offset; stat returns metadata; read/write use inline text or base64 (max 200000 decoded bytes). get copies remote to local_path; put copies local_path to remote, streaming without a total-size cap or returning file content. mkdir/rm support recursive; rename needs dest. timeout covers SSH connection and transfer; raise it for large files. host_key_verification reports configured modes, not completed handshakes. Unspecified key checking is disabled; inherited true verifies. Never echo unrequested secrets.",
+    "description": "SFTP via saved credentials and Host Chaining. Auto-syncs stale inventory (TERMIUS_SYNC_TTL; separate 120-second sync limit). list supports limit/offset; stat returns metadata; read/write use inline text or base64 (max 200000 decoded bytes). get copies remote to local_path; put copies local_path to remote, streaming without a total-size cap or returning file content. mkdir/rm support recursive; rename needs dest. timeout covers SSH connection and transfer; raise it for large files. host_key_verification appears only when any endpoint is strict; it describes modes, not completed handshakes. Unspecified key checking is disabled; inherited true verifies. Never echo unrequested secrets.",
     "inputSchema": {
       "type": "object",
       "properties": {

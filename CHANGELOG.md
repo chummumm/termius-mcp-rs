@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.3
+
+### Changed
+
+- Show an existing team-vault-key warning in `status` and `sync` only for accounts marked `is_team:true`; omit it for personal accounts, including diagnostic output. Other cached warnings remain opt-in with `status(diagnostics=true)`. Shared-key retrieval and unreadable-resource failures are unchanged.
+- Match Python's account-level `host.agent_forwarding` preference and use the same value in the reference `ssh_command`. Preserve the saved-setting default and raw cloud truthiness semantics; native MCP SSH/SFTP do not gain local-agent forwarding.
+- Omit `host_key_verification` when all endpoints have checking disabled. Keep the complete ordered jump/target mapping whenever any endpoint uses strict checking. Verification and connection errors remain unchanged.
+
+### Validation
+
+- Add account-aware warning, raw setting conversion, host/command consistency, shell quoting and mixed-mode verification regressions, including real OpenSSH/SFTP checks.
+- Preserve the original `termius` and `termius-mcp` commands, synchronization, Host Chaining and transfer behavior.
+
 ## 0.1.2
 
 ### Changed

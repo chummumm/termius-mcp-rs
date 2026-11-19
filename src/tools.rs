@@ -148,7 +148,7 @@ impl Runtime {
                     .get("encryption_schema")
                     .cloned()
                     .unwrap_or(json!(""));
-                out["is_team"] = json!(session["is_team"] == true || session["is_team"] == "yes");
+                out["is_team"] = json!(is_team_account(&state));
                 out["has_keypair"] = json!(
                     session["private_key"]
                         .as_str()
@@ -159,12 +159,7 @@ impl Runtime {
                 out["vault_remembered"] = json!(vault_password(&state).is_some());
                 out["sync_ttl"] = json!(sync_ttl());
                 append_unreadable_count(&mut out, &state.inventory);
-                if args["diagnostics"] == true
-                    && let Some(warnings) = state.inventory["sync_warnings"].as_array()
-                    && !warnings.is_empty()
-                {
-                    out["sync_warnings"] = json!(warnings);
-                }
+                append_sync_warnings(&mut out, &state, args["diagnostics"] == true);
                 Ok(out)
             }
             "login" => {
@@ -247,6 +242,7 @@ impl Runtime {
                 let counts = inventory::counts(&next.inventory);
                 let mut out = json!({"ok":true,"last_synced":next.last_synced,"hosts":counts["hosts"],"counts":counts,"vault_remembered":vault_password(&next).is_some()});
                 append_unreadable_count(&mut out, &next.inventory);
+                append_sync_warnings(&mut out, &next, false);
                 self.commit(&previous, next).await?;
                 Ok(out)
             }
@@ -257,8 +253,12 @@ impl Runtime {
                         .map_err(|e| error("inventory_failed", e))?;
                     json!({"count":hosts.as_array().map_or(0, Vec::len),"hosts":hosts})
                 } else {
-                    inventory::host_details(&state.inventory, required_string(args, "name")?)
-                        .map_err(|e| error("host_not_found", e))?
+                    inventory::host_details(
+                        &state.inventory,
+                        required_string(args, "name")?,
+                        account_agent_forwarding(&state),
+                    )
+                    .map_err(|e| error("host_not_found", e))?
                 };
                 if name == "hosts" {
                     append_unreadable_count(&mut out, &state.inventory);
@@ -347,12 +347,61 @@ fn login_summary(session: &Value, remembered: bool) -> Value {
 }
 
 // Lists must still disclose an incomplete vault. Cached transport diagnostics
-// belong to an explicit status request, not every unrelated successful action.
+// do not belong on every unrelated successful action.
 fn append_unreadable_count(out: &mut Value, snapshot: &Value) {
     if let Some(count) = snapshot["unreadable_entities"].as_u64()
         && count > 0
     {
         out["unreadable_entities"] = json!(count);
+    }
+}
+
+fn is_team_account(state: &StoredState) -> bool {
+    state
+        .session
+        .as_ref()
+        .is_some_and(|session| session["is_team"] == true || session["is_team"] == "yes")
+}
+
+fn append_sync_warnings(out: &mut Value, state: &StoredState, diagnostics: bool) {
+    let Some(warnings) = state.inventory["sync_warnings"].as_array() else {
+        return;
+    };
+    let is_team = is_team_account(state);
+    let visible: Vec<&str> = warnings
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|warning| {
+            if *warning == cloud::TEAM_VAULT_KEYS_WARNING {
+                // This controls display only. A personal account may still
+                // need shared keys, so cloud retrieval must not use this flag.
+                is_team
+            } else {
+                diagnostics
+            }
+        })
+        .collect();
+    if !visible.is_empty() {
+        out["sync_warnings"] = json!(visible);
+    }
+}
+
+fn account_agent_forwarding(state: &StoredState) -> bool {
+    let setting = state
+        .session
+        .as_ref()
+        .and_then(|session| session.pointer("/settings/agent_forwarding"));
+    // Python defaults a missing saved setting to yes. Cloud values first pass
+    // through set_settings(), which uses Python truthiness rather than parsing
+    // yes/no strings. Match that conversion for the raw JSON cached here.
+    match setting {
+        None => true,
+        Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|value| value != 0.0),
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Array(value)) => !value.is_empty(),
+        Some(Value::Object(value)) => !value.is_empty(),
     }
 }
 
@@ -585,6 +634,85 @@ pub fn validate(name: &str, args: &Value) -> Result<(), ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn warning_projection_is_account_aware_without_mutating_cached_diagnostics() {
+        const OTHER_WARNING: &str = "Personal keyserver keys could not be authenticated";
+        for flag in [
+            json!(true),
+            json!(false),
+            json!("yes"),
+            json!("no"),
+            Value::Null,
+        ] {
+            let state = StoredState {
+                session: Some(json!({"is_team":flag})),
+                inventory: json!({"sync_warnings":[cloud::TEAM_VAULT_KEYS_WARNING, OTHER_WARNING]}),
+                ..StoredState::default()
+            };
+            let cached = state.inventory.clone();
+            for diagnostics in [false, true] {
+                let mut out = json!({});
+                append_sync_warnings(&mut out, &state, diagnostics);
+                let mut expected = Vec::new();
+                if flag == true || flag == "yes" {
+                    expected.push(cloud::TEAM_VAULT_KEYS_WARNING);
+                }
+                if diagnostics {
+                    expected.push(OTHER_WARNING);
+                }
+                if expected.is_empty() {
+                    assert!(out.get("sync_warnings").is_none());
+                } else {
+                    assert_eq!(out["sync_warnings"], json!(expected));
+                }
+                assert_eq!(state.inventory, cached);
+            }
+        }
+        for warnings in [Value::Null, json!([]), json!([null, 1, false, {}])] {
+            let state = StoredState {
+                session: Some(json!({"is_team":true})),
+                inventory: json!({"sync_warnings":warnings}),
+                ..StoredState::default()
+            };
+            let mut out = json!({});
+            append_sync_warnings(&mut out, &state, true);
+            assert!(out.get("sync_warnings").is_none());
+        }
+    }
+
+    #[test]
+    fn account_forwarding_matches_python_cloud_setting_truthiness_and_saved_default() {
+        assert!(account_agent_forwarding(&StoredState::default()));
+        let mut state = StoredState {
+            session: Some(json!({"settings":{}})),
+            ..StoredState::default()
+        };
+        assert!(account_agent_forwarding(&state));
+        for (setting, expected) in [
+            (json!(true), true),
+            (json!(false), false),
+            (Value::Null, false),
+            (json!(0), false),
+            (json!(0.0), false),
+            (json!(-0.0), false),
+            (json!(1), true),
+            (json!(-1), true),
+            (json!(0.01), true),
+            (json!(u64::MAX), true),
+            (json!(""), false),
+            (json!("yes"), true),
+            (json!("no"), true),
+            (json!("false"), true),
+            (json!([]), false),
+            (json!([false]), true),
+            (json!({}), false),
+            (json!({"enabled":false}), true),
+        ] {
+            state.session.as_mut().unwrap()["settings"]["agent_forwarding"] = setting.clone();
+            assert_eq!(account_agent_forwarding(&state), expected, "{setting}");
+        }
+    }
+
     #[test]
     fn otp_retry_code_depends_on_the_challenge_type_not_error_text() {
         let challenge = anyhow::Error::new(cloud::OtpRequired).context("Sign-in challenge");

@@ -28,7 +28,7 @@ fn effective_host_trust_preserves_inherited_true_and_nearest_false() {
     let resolved = inventory::resolve(&value, "destination").unwrap();
     assert!(!resolved.target.strict_host_key_check);
     assert_eq!(
-        inventory::host_details(&value, "destination").unwrap()["strict_host_key_check"],
+        inventory::host_details(&value, "destination", false).unwrap()["strict_host_key_check"],
         false
     );
 
@@ -40,7 +40,7 @@ fn effective_host_trust_preserves_inherited_true_and_nearest_false() {
             .strict_host_key_check
     );
     assert_eq!(
-        inventory::host_details(&value, "destination").unwrap()["strict_host_key_check"],
+        inventory::host_details(&value, "destination", false).unwrap()["strict_host_key_check"],
         true
     );
 
@@ -54,7 +54,7 @@ fn effective_host_trust_preserves_inherited_true_and_nearest_false() {
     for invalid in [json!(0), json!(1), json!("unsupported"), json!({})] {
         value["sshconfig_set"][0]["strict_host_key_check"] = invalid;
         assert!(inventory::resolve(&value, "destination").is_err());
-        let details = inventory::host_details(&value, "destination").unwrap();
+        let details = inventory::host_details(&value, "destination", false).unwrap();
         assert!(details["strict_host_key_check"].is_null());
         assert!(details["ssh_command"].is_null());
     }

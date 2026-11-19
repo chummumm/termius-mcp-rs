@@ -148,9 +148,12 @@ Incomplete identities, keys, group relations and host chains fail closed.
 
 ### Smaller tool responses
 
-Routine responses omit optional cloud/keyserver warning strings. Use the MCP
-tool `status` with `{"diagnostics":true}` when troubleshooting to inspect the
-warnings saved by the last sync. An actual incomplete vault is still reported
+Routine responses omit optional cloud/keyserver warning strings, except that
+`status` and `sync` report a cached team-vault-key failure for an account marked
+`is_team:true`. Accounts marked false omit that team warning, including from
+diagnostic output; this display rule never skips shared-key retrieval. Use the
+MCP tool `status` with `{"diagnostics":true}` to include other cached warnings.
+An actual incomplete vault is still reported
 as a positive `unreadable_entities` count by `status`, `sync`, `hosts` and
 `inventory`; zero counts are omitted. Successful single-host SSH/SFTP operations
 do not repeat unrelated global diagnostics. Operation errors and stale-cache
@@ -193,12 +196,20 @@ client. Use the output controls above to reduce either representation.
   endpoints use enrolled Termius keys, or user/system OpenSSH `known_hosts` when
   no Termius key exists. Compatibility endpoints ignore saved host-key records.
   A missing/invalid chain still never falls back to direct SSH.
-- `exec`/`files` results expose `host_key_verification` with `target` and ordered
-  `jumps` values of `strict` or `disabled`. These describe configured modes, not
-  proof that a handshake completed (for example, an execution may time out).
+- `exec`/`files` omit `host_key_verification` when the target and every jump have
+  checking disabled. Otherwise the full `target` and ordered `jumps` mapping is
+  retained, with `strict` or `disabled` for each endpoint. Omission does not mean
+  verification is enabled. These are configured modes, not proof that a
+  handshake completed (for example, an execution may time out).
 - Strict checking supports ordinary SSH host public keys and rejects host CA
   certificates. Compatibility mode does not validate certificate trust.
-  Agent forwarding is not enabled.
+  Native MCP `exec`/`files` do not forward the local SSH agent.
+- Like Python, `host.agent_forwarding` reports the saved account preference,
+  overriding host/group values; the reference `ssh_command` uses that same
+  preference for `ForwardAgent=yes/no`. A missing saved preference defaults to
+  true. Raw cloud setting values follow Python's truthiness conversion (including
+  nonempty strings), not a yes/no string parser. This metadata/reference-command
+  compatibility does not enable forwarding in native MCP connections.
 - Local SSH agent and automatic local-key lookup are used only for direct
   connections without explicit vault credentials. Password, encrypted private
   key and key passphrase authentication are implemented.

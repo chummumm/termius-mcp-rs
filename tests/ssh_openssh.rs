@@ -389,10 +389,15 @@ async fn openssh_honors_each_endpoints_host_key_verification_setting() -> Result
     direct.target.strict_host_key_check = false;
     let result = run_exec(&direct, &json!({"command":"printf direct-ok"}), token()).await?;
     assert_eq!(result["stdout"], "direct-ok");
-    assert_eq!(
-        result["host_key_verification"],
-        json!({"target":"disabled","jumps":[]})
-    );
+    assert!(result.get("host_key_verification").is_none());
+    let result = run_files(
+        &direct,
+        &json!({"action":"stat","path":fixture.remote("client_key.pub")}),
+        token(),
+    )
+    .await?;
+    assert_eq!(result["ok"], true);
+    assert!(result.get("host_key_verification").is_none());
 
     let mut hop = fixture.endpoint.clone();
     hop.strict_host_key_check = false;
@@ -401,10 +406,15 @@ async fn openssh_honors_each_endpoints_host_key_verification_setting() -> Result
     jumped.jumps.push(hop);
     let result = run_exec(&jumped, &json!({"command":"printf jump-ok"}), token()).await?;
     assert_eq!(result["stdout"], "jump-ok");
-    assert_eq!(
-        result["host_key_verification"],
-        json!({"target":"disabled","jumps":["disabled"]})
-    );
+    assert!(result.get("host_key_verification").is_none());
+    let result = run_files(
+        &jumped,
+        &json!({"action":"stat","path":fixture.remote("client_key.pub")}),
+        token(),
+    )
+    .await?;
+    assert_eq!(result["ok"], true);
+    assert!(result.get("host_key_verification").is_none());
 
     // Strict verification remains effective at either position in a route.
     jumped.target.strict_host_key_check = true;
@@ -431,6 +441,20 @@ async fn openssh_honors_each_endpoints_host_key_verification_setting() -> Result
         run_exec(&jumped, &json!({"command":"true"}), token())
             .await
             .is_err()
+    );
+
+    jumped.jumps[0].known_host_keys = fixture.endpoint.known_host_keys.clone();
+    jumped.target.strict_host_key_check = false;
+    let result = run_exec(
+        &jumped,
+        &json!({"command":"printf strict-jump-ok"}),
+        token(),
+    )
+    .await?;
+    assert_eq!(result["stdout"], "strict-jump-ok");
+    assert_eq!(
+        result["host_key_verification"],
+        json!({"target":"disabled","jumps":["strict"]})
     );
     Ok(())
 }

@@ -8,8 +8,8 @@ First update `Cargo.toml`, `Cargo.lock`, the matching `CHANGELOG.md` section, an
 
 Two explicit triggers are available:
 
-1. Change `.github/release.json` to `{"version":"0.1.2"}` for the desired version and push the reviewed change to `main`. The workflow's push filter matches only this file, so ordinary source or documentation pushes do not publish a release.
-2. Run **Release binaries** manually on `main`, providing the version without a `v` prefix. For example: `gh workflow run release.yml --ref main -f version=0.1.2`.
+1. Change `.github/release.json` to `{"version":"0.1.3"}` for the desired version and push the reviewed change to `main`. The workflow's push filter matches only this file, so ordinary source or documentation pushes do not publish a release.
+2. Run **Release binaries** manually on `main`, providing the version without a `v` prefix. For example: `gh workflow run release.yml --ref main -f version=0.1.3`.
 
 The version must be a stable `MAJOR.MINOR.PATCH` value exactly equal to `Cargo.toml`. The workflow captures the triggering commit SHA and uses it for every checkout and the resulting tag. Later changes to `main` cannot change an already running build. Version input is passed through environment variables and strict validation, never interpolated into a shell program.
 

@@ -128,8 +128,11 @@ Rust 版使用稳定的 **云端 ID**，可能与 Python 版的本地 ID 不同�
 
 ### 减少上下文占用
 
-普通返回不再附带可选云端/密钥接口的技术性警告。排障时可调用 MCP 的
-`status`，传入 `{"diagnostics":true}` 查看上次同步保存的详细提示。
+普通返回省略可选云端/密钥接口的技术性警告；例外是账号标记为
+`is_team:true` 时，`status`、`sync` 会返回已缓存的团队密钥加载失败提示。
+标记为 false 时不显示这条团队提示，包括诊断输出；这只影响展示，
+不会跳过共享密钥加载。排障时可调用 MCP `status`，传入
+`{"diagnostics":true}` 查看其他已缓存的详细提示。
 如果确实存在无法解密的资源，`status`、`sync`、`hosts`、`inventory` 仍返回
 大于 0 的 `unreadable_entities` 数量；数量为 0 时省略。已经成功的单主机
 SSH/SFTP 操作不再重复全局诊断。实际操作错误和旧缓存提示仍会返回。
@@ -164,11 +167,18 @@ SSH 通道直到获得退出状态。大文件 `get`/`put` 只返回元数据，
 - 每个跳板和目标分别遵循自己的继承设置。严格模式优先使用 Termius 登记
   密钥，否则检查用户/系统 `known_hosts`；兼容模式忽略已保存的主机密钥。
   缺失或异常的跳板关系仍会阻止连接，不会回退成直连。
-- `exec`/`files` 结果的 `host_key_verification` 显示 `target` 和按连接顺序排列
-  的 `jumps`，取值为 `strict` 或 `disabled`。它描述配置模式，不代表握手已完成；
+- 当目标和所有跳板都关闭校验时，`exec`/`files` 省略整个
+  `host_key_verification`。只要任意一跳启用严格校验，就保留完整的
+  `target` 和按连接顺序排列的 `jumps`，取值为 `strict` 或 `disabled`。
+  字段省略不代表开启校验；它描述配置模式，不代表握手已完成，
   例如执行超时可能发生在握手之前。
 - 严格模式支持普通 SSH 主机公钥、拒绝主机 CA 证书；兼容模式不验证证书信任。
-  不启用 agent 转发。
+  原生 MCP `exec`/`files` 不转发本地 SSH agent。
+- 与 Python 原版一致，`host.agent_forwarding` 读取已保存的账号设置，覆盖
+  主机/分组里的同名值；参考 `ssh_command` 同步使用 `ForwardAgent=yes/no`。
+  缺少已保存的设置时默认 true。原始云端值按 Python 真值规则转换
+  （包括非空字符串），不是 yes/no 字符串解析。这是信息和参考命令的兼容，
+  不会开启原生 MCP 连接的 agent 转发。
 - 密码、私钥和私钥口令认证已实现。没有显式保险库凭据的直连才尝试本地 agent
   或常见本地私钥。
 - `timeout` 范围为 1–86400 秒，默认 60 秒，覆盖 **SSH 连接加执行/传输阶段**。

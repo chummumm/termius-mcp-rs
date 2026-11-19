@@ -11,6 +11,8 @@ use tokio_util::sync::CancellationToken;
 
 const OPTIONAL_KEY_WARNING: &str =
     "Team vault keys could not be loaded; entities requiring those keys remain unavailable";
+const PERSONAL_KEY_WARNING: &str =
+    "Personal keyserver keys could not be loaded; entities requiring those keys remain unavailable";
 
 fn runtime(port: u16) -> Result<(tempfile::TempDir, Arc<Runtime>)> {
     let directory = tempfile::tempdir()?;
@@ -31,7 +33,7 @@ fn runtime(port: u16) -> Result<(tempfile::TempDir, Arc<Runtime>)> {
         "sshkeycrypt_set":[{"id":300,"label":"fixture-key","private_key":"fixture-private-material"}],
         "snippet_set":[{"id":400,"label":"fixture-snippet","script":"echo fixture"}],
         "unreadable_entities":0,
-        "sync_warnings":[OPTIONAL_KEY_WARNING]
+        "sync_warnings":[OPTIONAL_KEY_WARNING, PERSONAL_KEY_WARNING]
     });
     store.save()?;
     Ok((directory, Runtime::new(store)))
@@ -131,13 +133,129 @@ async fn optional_key_diagnostics_are_explicit_and_legacy_text_matches_structure
         let decoded: Value = serde_json::from_str(text)?;
         assert_eq!(decoded, result["structuredContent"]);
         assert_eq!(result["content"].as_array().unwrap().len(), 1);
-        assert_eq!(text.contains(OPTIONAL_KEY_WARNING), diagnostics);
+        assert!(!text.contains(OPTIONAL_KEY_WARNING));
+        assert_eq!(text.contains(PERSONAL_KEY_WARNING), diagnostics);
         if diagnostics {
-            assert_eq!(decoded["sync_warnings"], json!([OPTIONAL_KEY_WARNING]));
+            assert_eq!(decoded["sync_warnings"], json!([PERSONAL_KEY_WARNING]));
         }
     }
     write.shutdown().await?;
     task.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn team_warning_visibility_tracks_the_saved_account_without_hiding_partial_inventory()
+-> Result<()> {
+    let (dir, runtime) = runtime(22)?;
+    let mut store = Store::open_with(
+        dir.path().join("data"),
+        Some("test-only-state-passphrase"),
+        Some("0"),
+    )?;
+    store.state.inventory["unreadable_entities"] = json!(1);
+    store.state.inventory["host_set"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":2,"_undecryptable":true}));
+    for flag in [
+        json!(false),
+        json!(true),
+        json!("yes"),
+        json!("no"),
+        Value::Null,
+    ] {
+        store.state.session.as_mut().unwrap()["is_team"] = flag.clone();
+        store.save()?;
+        let is_team = flag == true || flag == "yes";
+        for diagnostics in [false, true] {
+            let data = runtime
+                .call(
+                    "status",
+                    json!({"diagnostics":diagnostics}),
+                    CancellationToken::new(),
+                )
+                .await?;
+            assert_eq!(data["is_team"], is_team);
+            assert_eq!(data["unreadable_entities"], 1);
+            assert_eq!(data.to_string().contains(OPTIONAL_KEY_WARNING), is_team);
+            assert_eq!(data.to_string().contains(PERSONAL_KEY_WARNING), diagnostics);
+        }
+        for (name, args) in [
+            ("hosts", json!({})),
+            ("host", json!({"name":"1"})),
+            ("inventory", json!({"kind":"groups"})),
+        ] {
+            let data = runtime.call(name, args, CancellationToken::new()).await?;
+            assert!(data.get("sync_warnings").is_none(), "{name}");
+        }
+        let error = runtime
+            .call(
+                "exec",
+                json!({"name":"2","command":"true"}),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("an unreadable target must still fail before connecting");
+        assert_eq!(error.code, "ssh_failed");
+        store.reload()?;
+        assert_eq!(
+            store.state.inventory["sync_warnings"],
+            json!([OPTIONAL_KEY_WARNING, PERSONAL_KEY_WARNING])
+        );
+    }
+    store.state.session.as_mut().unwrap()["is_team"] = json!(true);
+    store.state.inventory["sync_warnings"] = json!([]);
+    store.save()?;
+    let data = runtime
+        .call("status", json!({}), CancellationToken::new())
+        .await?;
+    assert!(
+        data.get("sync_warnings").is_none(),
+        "team membership alone must not invent a warning"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_forwarding_reads_the_saved_account_and_uses_the_same_value_in_its_command()
+-> Result<()> {
+    let (dir, runtime) = runtime(22)?;
+    let mut store = Store::open_with(
+        dir.path().join("data"),
+        Some("test-only-state-passphrase"),
+        Some("0"),
+    )?;
+    for (setting, expected) in [
+        (None, true),
+        (Some(json!(true)), true),
+        (Some(json!(false)), false),
+        (Some(Value::Null), false),
+        (Some(json!("false")), true),
+    ] {
+        let session = store.state.session.as_mut().unwrap();
+        session["settings"] = json!({});
+        if let Some(setting) = setting {
+            session["settings"]["agent_forwarding"] = setting;
+        }
+        store.state.inventory["sshconfig_set"][0]["agent_forwarding"] = json!(!expected);
+        store.save()?;
+        let data = runtime
+            .call("host", json!({"name":"1"}), CancellationToken::new())
+            .await?;
+        assert_eq!(data["agent_forwarding"], expected);
+        let option = if expected {
+            "ForwardAgent=yes"
+        } else {
+            "ForwardAgent=no"
+        };
+        assert!(
+            data["ssh_command"]
+                .as_str()
+                .context("direct SSH command")?
+                .contains(option)
+        );
+    }
     Ok(())
 }
 

@@ -28,6 +28,10 @@ const APP_VERSION: &str = "10.0.6";
 const MAX_BODY: usize = 64 * 1024 * 1024;
 const MAX_WS: usize = 8 * 1024 * 1024;
 const STAGE_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const TEAM_VAULT_KEYS_WARNING: &str =
+    "Team vault keys could not be loaded; entities requiring those keys remain unavailable";
+const PERSONAL_KEYSERVER_WARNING: &str =
+    "Personal keyserver keys could not be loaded; entities requiring those keys remain unavailable";
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Debug)]
@@ -787,13 +791,13 @@ fn decrypt_row(cryptor: &VaultCryptor, ring: &KeyRing, name: &str, row: &Value) 
 /// markers on every shared row that cannot be authenticated.
 fn optional_key_response(
     result: Result<Value>,
-    description: &str,
+    warning: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Value> {
     match result {
         Ok(value) => Some(value),
         Err(_) => {
-            warnings.push(format!("{description} could not be loaded; entities requiring those keys remain unavailable"));
+            warnings.push(warning.to_owned());
             None
         }
     }
@@ -825,7 +829,7 @@ pub async fn pull(session: &mut Value, password: &str) -> Result<Value> {
         && ring.private.is_none()
         && let Some(keys) = optional_key_response(
             get(&http, "v3/keyserver/key/my/", &token).await,
-            "Personal keyserver keys",
+            PERSONAL_KEYSERVER_WARNING,
             &mut warnings,
         )
         && ring.unwrap(&cryptor, &keys).is_err()
@@ -835,7 +839,7 @@ pub async fn pull(session: &mut Value, password: &str) -> Result<Value> {
     if ring.private.is_some()
         && let Some(records) = optional_key_response(
             get(&http, "v4/team/vault/keys/", &token).await,
-            "Team vault keys",
+            TEAM_VAULT_KEYS_WARNING,
             &mut warnings,
         )
     {
@@ -931,7 +935,7 @@ mod tests {
         assert!(
             optional_key_response(
                 Err(HttpStatus(403).into()),
-                "Team vault keys",
+                TEAM_VAULT_KEYS_WARNING,
                 &mut warnings
             )
             .is_none()
@@ -939,12 +943,14 @@ mod tests {
         assert!(
             optional_key_response(
                 Err(anyhow!("network error containing fixture-token")),
-                "Personal keyserver keys",
+                PERSONAL_KEYSERVER_WARNING,
                 &mut warnings
             )
             .is_none()
         );
         assert_eq!(warnings.len(), 2);
+        assert_eq!(warnings[0], TEAM_VAULT_KEYS_WARNING);
+        assert_eq!(warnings[1], PERSONAL_KEYSERVER_WARNING);
         assert!(!warnings.join(" ").contains("fixture-token"));
         let vectors: Value =
             serde_json::from_str(include_str!("../tests/fixtures/crypto_vectors.json")).unwrap();

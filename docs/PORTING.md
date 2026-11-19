@@ -58,12 +58,12 @@ matched the deterministic fixture's modulus, client public value and both proofs
 | SRP proof | Invalid or absent server proof is fatal; the Python source only warned for a mismatch |
 | SSO state | Requires the generated request ID and unexpired login attempt; arbitrary unbound identity-token callbacks are rejected |
 | Team keys | No unauthenticated plaintext-key fallback after unwrap fails |
-| Optional key APIs | Failures become explicit sync warnings; readable personal inventory can still synchronize, unreadable shared rows fail closed |
+| Optional key APIs | Shared-key retrieval is unchanged; team warnings appear in status/sync only for team accounts, other cached warnings require diagnostics; unreadable shared rows fail closed |
 | Required APIs | Authentication/network errors on required endpoints remain errors; legacy sync fallback is limited to endpoint-unavailable responses |
-| SSH trust | Unspecified policy defaults false so rotation does not block compatibility connections; explicit inherited true uses enrolled keys or known_hosts; results report configured modes |
+| SSH trust | Unspecified policy defaults false so rotation does not block compatibility connections; explicit inherited true uses enrolled keys or known_hosts; configured-mode metadata is omitted only when every endpoint is disabled |
 | Jump chains | Each hop honors its own trust setting; malformed or unknown owners still block routing |
 | Explicit keys | Missing private material does not fall back to the local agent |
-| Agent forwarding | Disabled; strict verification rejects host CA certificates; compatibility mode does not validate their trust |
+| Agent forwarding | `host` and its reference command reflect the account preference like Python; native MCP exec/files do not forward the local agent |
 | Input bounds | Explicit frame, in-flight request, timeout, inline-content, output and directory bounds; file get/put have no total-size cap and use fixed chunks |
 | SFTP downloads | Atomic local replacement; portable basename validation blocks Windows drive/ADS escapes |
 | Transport failure | A broken output pipe ends the session and cancels active work even if input remains open |

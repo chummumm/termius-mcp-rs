@@ -565,7 +565,9 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-pub fn host_details(snapshot: &Value, name: &str) -> Result<Value> {
+/// Project the saved account setting into host metadata and the manual SSH
+/// command. This does not enable forwarding in the native MCP transport.
+pub fn host_details(snapshot: &Value, name: &str, account_agent_forwarding: bool) -> Result<Value> {
     let host = find_host(snapshot, name)?;
     let mut out = host_row(snapshot, host);
     let merged = match merge(snapshot, host) {
@@ -580,7 +582,7 @@ pub fn host_details(snapshot: &Value, name: &str) -> Result<Value> {
         out[field] = merged.config.get(field).cloned().unwrap_or(Value::Null);
     }
     out["strict_host_key_check"] = json!(strict_host_key_check(&merged.config).ok());
-    out["agent_forwarding"] = json!(false);
+    out["agent_forwarding"] = json!(account_agent_forwarding);
     out["ssh_key"] = json!(merged.key.and_then(|key| text(key, "label")));
     out["startup_snippet"] = merged
         .config
@@ -601,9 +603,14 @@ pub fn host_details(snapshot: &Value, name: &str) -> Result<Value> {
             peer.address
         );
         Ok(format!(
-            "ssh -p {} -o StrictHostKeyChecking={} -o ForwardAgent=no -- {}",
+            "ssh -p {} -o StrictHostKeyChecking={} -o ForwardAgent={} -- {}",
             peer.port,
             if peer.strict_host_key_check {
+                "yes"
+            } else {
+                "no"
+            },
+            if account_agent_forwarding {
                 "yes"
             } else {
                 "no"
@@ -751,11 +758,72 @@ mod tests {
     }
 
     #[test]
+    fn account_forwarding_overrides_host_and_group_in_metadata_and_manual_command() {
+        for account_agent_forwarding in [false, true] {
+            for (host_setting, group_setting) in [(false, true), (true, false)] {
+                let mut s = snapshot();
+                s["sshconfig_set"][0]["agent_forwarding"] = json!(host_setting);
+                s["sshconfig_set"][1]["agent_forwarding"] = json!(group_setting);
+                let details = host_details(&s, "1", account_agent_forwarding).unwrap();
+                assert_eq!(details["agent_forwarding"], account_agent_forwarding);
+                let option = if account_agent_forwarding {
+                    "yes"
+                } else {
+                    "no"
+                };
+                assert_eq!(
+                    details["ssh_command"],
+                    format!(
+                        "ssh -p 2222 -o StrictHostKeyChecking=no -o ForwardAgent={option} -- 'host-user@server.example.com'"
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn manual_command_with_forwarding_keeps_the_destination_shell_quoted() {
+        let mut s = snapshot();
+        s["identity_set"][0]["username"] = json!("o'connor $(printf injected)");
+        let details = host_details(&s, "1", true).unwrap();
+        assert_eq!(
+            details["ssh_command"],
+            "ssh -p 2222 -o StrictHostKeyChecking=no -o ForwardAgent=yes -- 'o'\"'\"'connor $(printf injected)@server.example.com'"
+        );
+    }
+
+    #[test]
+    fn account_forwarding_does_not_create_a_manual_command_for_a_host_chain() {
+        let mut s = snapshot();
+        s["host_set"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":2,"label":"hop","address":"hop.example.com","ssh_config":20}));
+        s["hostchain_set"] = json!([{"id":1,"ssh_config":10,"hosts_chain":[2]}]);
+        for account_agent_forwarding in [false, true] {
+            let details = host_details(&s, "1", account_agent_forwarding).unwrap();
+            assert_eq!(details["agent_forwarding"], account_agent_forwarding);
+            assert!(details["ssh_command"].is_null());
+            assert_eq!(
+                details["ssh_command_reason"],
+                "Use exec or files for this Termius host chain"
+            );
+        }
+        s["hostchain_set"][0]["_undecryptable"] = json!(true);
+        let unavailable = host_details(&s, "1", true).unwrap();
+        assert!(unavailable["ssh_command"].is_null());
+        assert_eq!(
+            unavailable["ssh_command_reason"],
+            "Unreadable SSH host chain; sync the vault"
+        );
+    }
+
+    #[test]
     fn public_projections_never_return_passwords_or_private_keys() {
         let s = snapshot();
         let mut outputs = vec![
             hosts(&s, None).unwrap(),
-            host_details(&s, "1").unwrap(),
+            host_details(&s, "1", true).unwrap(),
             counts(&s),
         ];
         for kind in ["identities", "keys", "groups", "snippets"] {
